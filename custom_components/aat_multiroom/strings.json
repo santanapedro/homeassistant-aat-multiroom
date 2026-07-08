@@ -1,0 +1,36 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Conectar ao AAT Multiroom",
+        "description": "Informe o endereço IP do amplificador Multiroom AAT na sua rede local.",
+        "data": {
+          "host": "Endereço IP",
+          "port": "Porta TCP"
+        }
+      },
+      "naming": {
+        "title": "Nomear equipamento, zonas e entradas",
+        "description": "Modelo detectado: {model} ({zones} zona(s)). Dê um nome para o equipamento, para cada zona e para cada entrada de áudio. Você poderá alterar esses nomes depois em \"Configurar\".",
+        "data": {
+          "name": "Nome do equipamento"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Não foi possível conectar ao Multiroom neste endereço/porta.",
+      "unknown": "Erro inesperado ao conectar."
+    },
+    "abort": {
+      "already_configured": "Este Multiroom já está configurado."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Renomear zonas e entradas",
+        "description": "Atualize os nomes das zonas e das entradas de áudio deste Multiroom."
+      }
+    }
+  }
+}
