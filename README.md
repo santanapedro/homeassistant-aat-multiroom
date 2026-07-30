@@ -4,6 +4,13 @@ Integração custom para controlar amplificadores **AAT Multiroom Digital**
 (PMR, PMRH, PMA) pela rede, usando o protocolo TCP documentado em
 "AAT Digital Matrix Amplifiers - API (TCP/SERIAL/IR) Rev.12".
 
+Esta é uma integração não-oficial, sem afiliação com a AAT (Advanced Audio
+Technologies). O ícone (`custom_components/aat_multiroom/brand/`) é um
+glifo genérico de alto-falante gerado localmente (`tools/make_icon.py`),
+não a logo da marca — HA 2026.3+ permite que integrações custom tragam
+seu próprio ícone dessa forma, sem depender do repositório central
+`home-assistant/brands`.
+
 ## Escopo desta versão
 
 Só controle das **zonas do amplificador** — sem streamer embutido (PMR-9 a
