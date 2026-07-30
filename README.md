@@ -88,6 +88,20 @@ um multiroom cair, travar ou ser reconfigurado não afeta os outros.
 - Existe também uma sincronização periódica de segurança (a cada 30s) e
   reconexão automática com backoff, caso a conexão caia.
 
+## Diagnóstico de erros
+
+- **Falha de conexão** (na tela de configuração ou ao carregar a
+  integração): a mensagem real (timeout, recusada, sem rota etc.) fica
+  registrada nos logs do Home Assistant (Configurações → Sistema → Logs),
+  além do aviso genérico que aparece na tela.
+- **Comando recusado pelo aparelho** (ex.: zona inválida): em vez de uma
+  exceção genérica, a integração traduz os códigos de erro do protocolo
+  (seção 1.3.8 do manual) em mensagens específicas — "aparelho precisa
+  estar ligado", "zona inválida ou valor fora do intervalo", etc. — que
+  aparecem na notificação de erro do Home Assistant. O estado da zona
+  também é ressincronizado automaticamente logo em seguida, corrigindo
+  qualquer suposição otimista que tenha ficado errada.
+
 ## Testes
 
 A suíte de testes (`tests/`) valida o parsing do protocolo e a lógica de
@@ -100,6 +114,12 @@ instância do Home Assistant rodando.
 pip install -r requirements_test.txt
 pytest
 ```
+
+45 testes, cobrindo: framing/sequencial/GETALL/mensagens não
+solicitadas/timeouts do protocolo (`test_api_protocol.py`), parsing de
+estado por zona e todos os handlers de push (`test_device_state.py`), e a
+tradução dos erros do protocolo em mensagens amigáveis, incluindo a
+ressincronização automática após uma falha (`test_device_errors.py`).
 
 Uma exceção documentada: o manual nunca mostra os bytes exatos de uma
 resposta de erro (só o significado de cada código, ex. "17 - zona

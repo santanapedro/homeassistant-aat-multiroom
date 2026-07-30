@@ -30,8 +30,15 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     try:
         await device.async_setup()
     except AatConnectionError as err:
+        _LOGGER.warning(
+            "Could not connect to AAT multiroom %s at %s:%s: %s",
+            entry.title,
+            device.host,
+            device.port,
+            err,
+        )
         raise ConfigEntryNotReady(
-            f"Não foi possível conectar ao Multiroom AAT em {device.host}:{device.port}"
+            f"Não foi possível conectar ao Multiroom AAT em {device.host}:{device.port}: {err}"
         ) from err
 
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = device

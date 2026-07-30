@@ -65,7 +65,10 @@ class AatMultiroomConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
             try:
                 model, zone_count = await async_probe(host, port)
-            except AatConnectionError:
+            except AatConnectionError as err:
+                _LOGGER.warning(
+                    "Could not connect to AAT multiroom at %s:%s: %s", host, port, err
+                )
                 errors["base"] = "cannot_connect"
             except Exception:  # noqa: BLE001
                 _LOGGER.exception("Unexpected error probing %s:%s", host, port)
@@ -142,7 +145,10 @@ class AatMultiroomConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             if not errors:
                 try:
                     model, _zone_count = await async_probe(host, port)
-                except AatConnectionError:
+                except AatConnectionError as err:
+                    _LOGGER.warning(
+                        "Could not connect to AAT multiroom at %s:%s: %s", host, port, err
+                    )
                     errors["base"] = "cannot_connect"
                 except Exception:  # noqa: BLE001
                     _LOGGER.exception("Unexpected error probing %s:%s", host, port)

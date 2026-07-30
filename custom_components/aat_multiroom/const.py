@@ -37,3 +37,17 @@ INPUT_COUNTS_BY_MODEL: dict[str, int] = {
     "PMR12": 6,
     "PMR13": 5,
 }
+
+# Manual section 1.3.8 (error codes) mapped to translation keys under the
+# top-level "exceptions" section of strings.json/translations. Codes 17 and
+# 18 mean slightly different things in different sections of the manual
+# (invalid zone vs. invalid value, depending on the command), so we keep the
+# wording generic enough to cover every command we actually send in v1
+# (POWER/ZSTDBY/MUTE/VOL/INPSET).
+ERROR_CODE_TRANSLATION_KEYS: dict[str, str] = {
+    "7": "unknown_command",
+    "8": "device_off",
+    "17": "invalid_zone_or_value",
+    "18": "value_out_of_range",
+}
+DEFAULT_ERROR_TRANSLATION_KEY = "command_failed"

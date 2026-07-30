@@ -41,5 +41,25 @@
         "description": "Update the names of this Multiroom's zones and audio inputs."
       }
     }
+  },
+  "exceptions": {
+    "unknown_command": {
+      "message": "The device did not recognize the command \"{command}\" (error code 7)."
+    },
+    "device_off": {
+      "message": "The device must be powered on to accept the command \"{command}\" (error code 8)."
+    },
+    "invalid_zone_or_value": {
+      "message": "The device rejected the command \"{command}\": invalid zone or value out of range (error code 17)."
+    },
+    "value_out_of_range": {
+      "message": "The device rejected the command \"{command}\": value out of range (error code 18)."
+    },
+    "command_failed": {
+      "message": "The device rejected the command \"{command}\" (error code {code})."
+    },
+    "connection_error": {
+      "message": "Communication with the Multiroom failed while running \"{command}\": {error}"
+    }
   }
 }

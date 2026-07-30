@@ -41,5 +41,25 @@
         "description": "Atualize os nomes das zonas e das entradas de áudio deste Multiroom."
       }
     }
+  },
+  "exceptions": {
+    "unknown_command": {
+      "message": "O aparelho não reconheceu o comando \"{command}\" (código 7)."
+    },
+    "device_off": {
+      "message": "O aparelho precisa estar ligado para aceitar o comando \"{command}\" (código 8)."
+    },
+    "invalid_zone_or_value": {
+      "message": "O aparelho recusou o comando \"{command}\": zona inválida ou valor fora do intervalo permitido (código 17)."
+    },
+    "value_out_of_range": {
+      "message": "O aparelho recusou o comando \"{command}\": valor fora do intervalo permitido (código 18)."
+    },
+    "command_failed": {
+      "message": "O aparelho recusou o comando \"{command}\" (código {code})."
+    },
+    "connection_error": {
+      "message": "Falha de comunicação com o Multiroom ao executar \"{command}\": {error}"
+    }
   }
 }

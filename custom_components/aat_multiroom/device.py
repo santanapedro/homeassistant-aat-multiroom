@@ -18,10 +18,19 @@ from typing import Callable
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.dispatcher import async_dispatcher_send
 
-from .api import AatConnectionError, AatMultiroomClient
-from .const import CONF_MODEL, DEFAULT_PORT, DOMAIN, MAX_VOLUME, REFRESH_INTERVAL
+from .api import AatCommandError, AatConnectionError, AatMultiroomClient
+from .const import (
+    CONF_MODEL,
+    DEFAULT_ERROR_TRANSLATION_KEY,
+    DEFAULT_PORT,
+    DOMAIN,
+    ERROR_CODE_TRANSLATION_KEYS,
+    MAX_VOLUME,
+    REFRESH_INTERVAL,
+)
 from homeassistant.const import CONF_HOST, CONF_PORT
 
 _LOGGER = logging.getLogger(__name__)
@@ -100,8 +109,8 @@ class AatMultiroomDevice:
                 continue
             try:
                 await self.async_refresh_full_state()
-            except AatConnectionError:
-                _LOGGER.debug("Periodic refresh failed for %s", self.host)
+            except AatConnectionError as err:
+                _LOGGER.debug("Periodic refresh failed for %s: %s", self.host, err)
 
     def _schedule_reconnect(self) -> None:
         self._notify()
@@ -119,7 +128,14 @@ class AatMultiroomDevice:
             try:
                 await self.client.async_connect()
                 await self.async_refresh_full_state()
-            except AatConnectionError:
+            except AatConnectionError as err:
+                _LOGGER.debug(
+                    "Reconnect attempt to %s:%s failed (retrying in %ss): %s",
+                    self.host,
+                    self.port,
+                    delay,
+                    err,
+                )
                 delay = min(delay * 2, _RECONNECT_MAX_DELAY)
             else:
                 _LOGGER.info("Reconnected to AAT multiroom %s:%s", self.host, self.port)
@@ -249,10 +265,28 @@ class AatMultiroomDevice:
         self._notify()
         try:
             await self.client.async_send_command(cmd, *args)
-        except Exception:
-            # Local state may now be wrong; resync as soon as possible.
+        except AatCommandError as err:
+            # The device rejected the command outright (manual section
+            # 1.3.8) - our optimistic guess was wrong, resync it.
+            _LOGGER.debug("%s %s rejected by %s: code %s", cmd, args, self.host, err.code)
             self.hass.async_create_task(self.async_refresh_full_state())
-            raise
+            translation_key = ERROR_CODE_TRANSLATION_KEYS.get(
+                err.code, DEFAULT_ERROR_TRANSLATION_KEY
+            )
+            raise HomeAssistantError(
+                translation_domain=DOMAIN,
+                translation_key=translation_key,
+                translation_placeholders={"code": err.code, "command": cmd},
+            ) from err
+        except AatConnectionError as err:
+            # Connection dropped mid-command; local state may now be wrong.
+            _LOGGER.debug("%s %s failed for %s: %s", cmd, args, self.host, err)
+            self.hass.async_create_task(self.async_refresh_full_state())
+            raise HomeAssistantError(
+                translation_domain=DOMAIN,
+                translation_key="connection_error",
+                translation_placeholders={"command": cmd, "error": str(err)},
+            ) from err
 
     async def async_zone_power(self, zone: int, on: bool) -> None:
         def _apply() -> None:
