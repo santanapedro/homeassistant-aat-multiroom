@@ -5,11 +5,14 @@ Integração custom para controlar amplificadores **AAT Multiroom Digital**
 "AAT Digital Matrix Amplifiers - API (TCP/SERIAL/IR) Rev.12".
 
 Esta é uma integração não-oficial, sem afiliação com a AAT (Advanced Audio
-Technologies). O ícone (`custom_components/aat_multiroom/brand/`) é um
-glifo genérico de alto-falante gerado localmente (`tools/make_icon.py`),
-não a logo da marca — HA 2026.3+ permite que integrações custom tragam
-seu próprio ícone dessa forma, sem depender do repositório central
-`home-assistant/brands`.
+Technologies) — por isso o ícone (`custom_components/aat_multiroom/brand/`)
+usa a marca da **Avant Tecnologia**, mantenedora deste projeto, e não a
+logo da AAT. HA 2026.3+ permite que integrações custom tragam seu próprio
+ícone dessa forma, sem depender do repositório central
+`home-assistant/brands`. Os arquivos (`icon.png`, `logo.png` e
+`dark_logo.png`, com variantes `@2x`) são gerados a partir da arte
+original com `tools/make_icon.py <arquivo-fonte>`, que remove o fundo
+branco e recorta/redimensiona conforme as especificações de imagem do HA.
 
 ## Escopo desta versão
 
