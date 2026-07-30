@@ -51,6 +51,7 @@ class AatMultiroomDevice:
         self.model: str = entry.data.get(CONF_MODEL, "")
         self.zone_count = 0
         self.zones: dict[int, ZoneState] = {}
+        self.power: bool = True
 
         self.client = AatMultiroomClient(self.host, self.port)
         self.client.add_listener(self._on_message)
@@ -145,6 +146,7 @@ class AatMultiroomDevice:
         if len(args) < 5:
             return
         self.model = args[0]
+        self.power = args[2].upper() == "ON"
         zone_data = args[5:]
         zone_count = len(zone_data) // 7
         for i in range(zone_count):
@@ -203,6 +205,18 @@ class AatMultiroomDevice:
     def _h_inpchange(self, args: list[str]) -> None:
         self._get_zone(int(args[0])).input = int(args[1])
 
+    def _h_pwron(self, args: list[str]) -> None:
+        self.power = True
+
+    def _h_pwroff(self, args: list[str]) -> None:
+        self.power = False
+
+    def _h_pwrtog(self, args: list[str]) -> None:
+        self.power = args[0].upper() == "ON"
+
+    def _h_pwrget(self, args: list[str]) -> None:
+        self.power = args[0].upper() == "ON"
+
     _HANDLERS: dict[str, Callable[["AatMultiroomDevice", list[str]], None]] = {
         "ZSTDBYON": _h_zstdbyon,
         "ZSTDBYOFF": _h_zstdbyoff,
@@ -218,13 +232,17 @@ class AatMultiroomDevice:
         "VOLSET": _h_volchange,
         "INPSET": _h_inpchange,
         "INPGET": _h_inpchange,
+        "PWRON": _h_pwron,
+        "PWROFF": _h_pwroff,
+        "PWRTOG": _h_pwrtog,
+        "PWRGET": _h_pwrget,
     }
 
     # ------------------------------------------------------------------
     # commands (optimistic: update cache immediately, then talk to device)
     # ------------------------------------------------------------------
 
-    async def _run_zone_command(
+    async def _run_command(
         self, apply_optimistic: Callable[[], None], cmd: str, *args: object
     ) -> None:
         apply_optimistic()
@@ -240,7 +258,7 @@ class AatMultiroomDevice:
         def _apply() -> None:
             self._get_zone(zone).standby = not on
 
-        await self._run_zone_command(_apply, "ZSTDBYOFF" if on else "ZSTDBYON", zone)
+        await self._run_command(_apply, "ZSTDBYOFF" if on else "ZSTDBYON", zone)
 
     async def async_set_volume(self, zone: int, volume: int) -> None:
         volume = max(0, min(MAX_VOLUME, volume))
@@ -248,7 +266,7 @@ class AatMultiroomDevice:
         def _apply() -> None:
             self._get_zone(zone).volume = volume
 
-        await self._run_zone_command(_apply, "VOLSET", zone, volume)
+        await self._run_command(_apply, "VOLSET", zone, volume)
 
     async def async_volume_step(self, zone: int, up: bool) -> None:
         def _apply() -> None:
@@ -258,16 +276,22 @@ class AatMultiroomDevice:
             else:
                 zone_state.volume = max(0, zone_state.volume - 1)
 
-        await self._run_zone_command(_apply, "VOL+" if up else "VOL-", zone)
+        await self._run_command(_apply, "VOL+" if up else "VOL-", zone)
 
     async def async_set_mute(self, zone: int, mute: bool) -> None:
         def _apply() -> None:
             self._get_zone(zone).mute = mute
 
-        await self._run_zone_command(_apply, "MUTEON" if mute else "MUTEOFF", zone)
+        await self._run_command(_apply, "MUTEON" if mute else "MUTEOFF", zone)
 
     async def async_select_input(self, zone: int, input_num: int) -> None:
         def _apply() -> None:
             self._get_zone(zone).input = input_num
 
-        await self._run_zone_command(_apply, "INPSET", zone, input_num)
+        await self._run_command(_apply, "INPSET", zone, input_num)
+
+    async def async_master_power(self, on: bool) -> None:
+        def _apply() -> None:
+            self.power = on
+
+        await self._run_command(_apply, "PWRON" if on else "PWROFF")

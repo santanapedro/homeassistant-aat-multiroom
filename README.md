@@ -4,18 +4,29 @@ Integração custom para controlar amplificadores **AAT Multiroom Digital**
 (PMR, PMRH, PMA) pela rede, usando o protocolo TCP documentado em
 "AAT Digital Matrix Amplifiers - API (TCP/SERIAL/IR) Rev.12".
 
-## Escopo desta v1
+## Escopo desta versão
 
 Só controle das **zonas do amplificador** — sem streamer embutido (PMR-9 a
 PMR-13), sem tons (grave/agudo), sem balanço, sem ganho de pré-amp, sem
-modo festa/grupos. Por zona, você tem:
+modo festa/grupos.
 
-- **Power** da zona (liga/desliga o amplificador daquela zona — comando
-  `ZSTDBYON`/`ZSTDBYOFF`, não o power geral do aparelho)
-- **Volume** (0–87, como no aparelho)
-- **Mute**
-- **Seleção de entrada por botões** (um botão por entrada, dentro do
-  dispositivo daquela zona) — em vez de uma lista suspensa
+Por multiroom (dispositivo "hub"):
+
+- **Switch de power geral** (`PWRON`/`PWROFF`) — liga/desliga o aparelho
+  inteiro de uma vez.
+
+Por zona (cada zona é um dispositivo próprio dentro do multiroom):
+
+- **`media_player`** com power, volume (0–87, como no aparelho) e mute
+  embutidos (o toggle de power aqui usa `ZSTDBYON`/`ZSTDBYOFF`, que é o
+  stand-by daquela zona específica, não o power geral do aparelho).
+- **Switch de power da zona** — o mesmo `ZSTDBYON`/`ZSTDBYOFF`, só que como
+  uma entidade separada e sempre visível, com ícone que muda conforme o
+  estado (`mdi:speaker` ligado / `mdi:speaker-off` desligado), útil em
+  layouts de dashboard onde o toggle dentro do card do media_player não é
+  tão visível.
+- **Botão por entrada** (`INPSET`) — um botão por entrada de áudio, em vez
+  de uma lista suspensa.
 
 ## Instalação
 
