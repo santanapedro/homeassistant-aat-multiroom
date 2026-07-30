@@ -15,6 +15,14 @@
         "data": {
           "name": "Nome do equipamento"
         }
+      },
+      "reconfigure": {
+        "title": "Atualizar endereço do Multiroom",
+        "description": "Use isto se o IP do aparelho mudou. Os nomes de zonas/entradas e o histórico das entidades são mantidos.",
+        "data": {
+          "host": "Endereço IP",
+          "port": "Porta TCP"
+        }
       }
     },
     "error": {
@@ -22,7 +30,8 @@
       "unknown": "Erro inesperado ao conectar."
     },
     "abort": {
-      "already_configured": "Este Multiroom já está configurado."
+      "already_configured": "Este Multiroom já está configurado.",
+      "reconfigure_successful": "Endereço atualizado com sucesso."
     }
   },
   "options": {

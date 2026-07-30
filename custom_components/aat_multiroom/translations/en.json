@@ -15,6 +15,14 @@
         "data": {
           "name": "Equipment name"
         }
+      },
+      "reconfigure": {
+        "title": "Update the Multiroom's address",
+        "description": "Use this if the unit's IP address changed. Zone/input names and entity history are kept.",
+        "data": {
+          "host": "IP address",
+          "port": "TCP port"
+        }
       }
     },
     "error": {
@@ -22,7 +30,8 @@
       "unknown": "Unexpected error while connecting."
     },
     "abort": {
-      "already_configured": "This Multiroom is already configured."
+      "already_configured": "This Multiroom is already configured.",
+      "reconfigure_successful": "Address updated successfully."
     }
   },
   "options": {

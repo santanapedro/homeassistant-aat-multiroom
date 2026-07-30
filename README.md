@@ -60,6 +60,12 @@ Por zona (cada zona é um dispositivo próprio dentro do multiroom):
 Para renomear zonas/entradas depois, use o botão **Configurar** na
 integração (não precisa remover e adicionar de novo).
 
+### Se o IP do multiroom mudar
+
+Vá no card da integração → menu (⋮) → **Reconfigurar**, e informe o novo
+IP. Isso atualiza a conexão sem apagar a integração — nomes de zonas,
+entradas e o histórico das entidades são mantidos.
+
 ## Múltiplos multirooms
 
 Repita o processo de adicionar integração para cada amplificador AAT que

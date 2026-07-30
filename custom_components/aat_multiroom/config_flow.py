@@ -123,6 +123,51 @@ class AatMultiroomConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             },
         )
 
+    async def async_step_reconfigure(self, user_input: dict[str, Any] | None = None) -> FlowResult:
+        """Let the user change host/port (e.g. the multiroom's IP changed)
+        without losing the existing zone/input names or entity history."""
+        reconfigure_entry = self._get_reconfigure_entry()
+        errors: dict[str, str] = {}
+
+        if user_input is not None:
+            host = user_input[CONF_HOST].strip()
+            port = int(user_input.get(CONF_PORT, DEFAULT_PORT))
+            new_unique_id = f"{host}:{port}"
+
+            for other in self._async_current_entries(include_ignore=False):
+                if other.entry_id != reconfigure_entry.entry_id and other.unique_id == new_unique_id:
+                    errors["base"] = "already_configured"
+                    break
+
+            if not errors:
+                try:
+                    model, _zone_count = await async_probe(host, port)
+                except AatConnectionError:
+                    errors["base"] = "cannot_connect"
+                except Exception:  # noqa: BLE001
+                    _LOGGER.exception("Unexpected error probing %s:%s", host, port)
+                    errors["base"] = "unknown"
+                else:
+                    return self.async_update_reload_and_abort(
+                        reconfigure_entry,
+                        unique_id=new_unique_id,
+                        data_updates={
+                            CONF_HOST: host,
+                            CONF_PORT: port,
+                            CONF_MODEL: _normalize_model(model),
+                        },
+                    )
+
+        current_host = reconfigure_entry.data.get(CONF_HOST, "")
+        current_port = reconfigure_entry.data.get(CONF_PORT, DEFAULT_PORT)
+        schema = vol.Schema(
+            {
+                vol.Required(CONF_HOST, default=current_host): str,
+                vol.Optional(CONF_PORT, default=current_port): int,
+            }
+        )
+        return self.async_show_form(step_id="reconfigure", data_schema=schema, errors=errors)
+
     @staticmethod
     @callback
     def async_get_options_flow(
