@@ -82,6 +82,25 @@ um multiroom cair, travar ou ser reconfigurado não afeta os outros.
 - Existe também uma sincronização periódica de segurança (a cada 30s) e
   reconexão automática com backoff, caso a conexão caia.
 
+## Testes
+
+A suíte de testes (`tests/`) valida o parsing do protocolo e a lógica de
+estado por zona usando os exemplos de bytes reais do próprio manual da AAT
+(ex.: as respostas de `GETALL` para PMR-7 e PMR-6), rodando contra um
+servidor TCP fake local — não precisa de hardware físico nem de uma
+instância do Home Assistant rodando.
+
+```bash
+pip install -r requirements_test.txt
+pytest
+```
+
+Uma exceção documentada: o manual nunca mostra os bytes exatos de uma
+resposta de erro (só o significado de cada código, ex. "17 - zona
+inválida"). O teste `test_error_code_reply_raises_command_error` deixa
+explícito que a integração assume o formato `[r001 17]` — isso ainda
+precisa ser confirmado contra um aparelho real.
+
 ## Limitações conhecidas / próximos passos possíveis
 
 - Não implementa tons (bass/treble), balanço, ganho de pré-amp, modo
