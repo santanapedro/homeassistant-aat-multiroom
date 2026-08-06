@@ -29,14 +29,24 @@ Por zona (cada zona é um dispositivo próprio dentro do multiroom):
 
 - **`media_player`** com power, volume (0–87, como no aparelho) e mute
   embutidos (o toggle de power aqui usa `ZSTDBYON`/`ZSTDBYOFF`, que é o
-  stand-by daquela zona específica, não o power geral do aparelho).
+  stand-by daquela zona específica, não o power geral do aparelho). O
+  atributo `source` mostra a entrada atual (útil em cards configurados
+  para exibir essa informação, e em automações).
 - **Switch de power da zona** — o mesmo `ZSTDBYON`/`ZSTDBYOFF`, só que como
   uma entidade separada e sempre visível, com ícone que muda conforme o
   estado (`mdi:speaker` ligado / `mdi:speaker-off` desligado), útil em
   layouts de dashboard onde o toggle dentro do card do media_player não é
   tão visível.
-- **Botão por entrada** (`INPSET`) — um botão por entrada de áudio, em vez
-  de uma lista suspensa.
+- **Switch por entrada** (`INPSET`) — um switch por entrada de áudio, em
+  vez de uma lista suspensa. Ligar um deles seleciona aquela entrada; o
+  switch da entrada ativa fica com o ícone "pintado" (`mdi:radiobox-marked`,
+  na cor de destaque do tema) e os demais aparecem apagados
+  (`mdi:radiobox-blank`) — são mutuamente exclusivos, como um grupo de
+  rádio. Desligar o switch da entrada já ativa não faz nada (o aparelho não
+  tem um estado de "nenhuma entrada", só dá pra trocar pra outra).
+- **Sensor "Entrada atual"** — mostra em texto simples o nome da entrada
+  selecionada naquela zona, sempre visível em qualquer dashboard sem
+  precisar configurar nada.
 
 ## Instalação
 
@@ -65,7 +75,9 @@ Por zona (cada zona é um dispositivo próprio dentro do multiroom):
    uma tela para você nomear o equipamento, cada zona e cada entrada de
    áudio (com sugestões já pré-preenchidas, tipo "Zona 1", "Entrada 1").
 4. Pronto — cada zona vira um dispositivo separado dentro do Multiroom, com
-   um `media_player` (power/volume/mute) e um botão por entrada.
+   um `media_player` (power/volume/mute), um switch por entrada de áudio
+   (com destaque visual na entrada ativa) e um sensor mostrando a entrada
+   atual em texto.
 
 Para renomear zonas/entradas depois, use o botão **Configurar** na
 integração (não precisa remover e adicionar de novo).
@@ -143,9 +155,22 @@ precisa ser confirmado contra um aparelho real.
   festa/agrupamento de zonas nem o streamer embutido dos modelos PMR-9 a
   PMR-13 — pode ser adicionado depois como entidades `number`/`switch`
   adicionais, sem precisar redesenhar o que já existe.
-- A contagem de entradas por modelo (usada só para sugerir quantos botões
-  criar no primeiro setup) vem de uma tabela estática baseada na capa do
-  manual; se o seu modelo específico tiver menos entradas ligadas
-  fisicamente do que o padrão do modelo, os botões extras simplesmente não
-  farão efeito (o próprio aparelho ignora comandos para entradas
+- A contagem de entradas por modelo (usada só para sugerir quantos
+  switches criar no primeiro setup) vem de uma tabela estática baseada na
+  capa do manual; se o seu modelo específico tiver menos entradas ligadas
+  fisicamente do que o padrão do modelo, os switches extras simplesmente
+  não farão efeito (o próprio aparelho ignora comandos para entradas
   inexistentes).
+
+## Histórico: troca de botões por switches na seleção de entrada
+
+Até a v0.6.0, a seleção de entrada era feita por `button` (ação simples,
+sem estado). A partir da v0.7.0 isso virou `switch` (liga/desliga com
+estado real), porque só assim o Home Assistant consegue pintar o ícone da
+entrada ativa automaticamente — `button` não tem conceito de "ligado".
+Se você atualizou de uma versão anterior, os botões antigos (`button.*`)
+somem da lista de entidades fornecidas pela integração e ficam
+"indisponíveis" no registro do Home Assistant; pode removê-los manualmente
+em Configurações → Dispositivos e serviços → Entidades (filtre por
+"indisponível"). Os switches novos (`switch.*_input_*`) são criados com
+nomes/entity_id novos automaticamente.
