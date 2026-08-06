@@ -29,9 +29,13 @@ Por zona (cada zona é um dispositivo próprio dentro do multiroom):
 
 - **`media_player`** com power, volume (0–87, como no aparelho) e mute
   embutidos (o toggle de power aqui usa `ZSTDBYON`/`ZSTDBYOFF`, que é o
-  stand-by daquela zona específica, não o power geral do aparelho). O
-  atributo `source` mostra a entrada atual (útil em cards configurados
-  para exibir essa informação, e em automações).
+  stand-by daquela zona específica, não o power geral do aparelho). A
+  entrada atual aparece como informação secundária no card (via
+  `media_title`, o campo que a maioria dos cards usa como subtítulo — não
+  existe "faixa tocando" de verdade numa zona de amplificador, então
+  reaproveitamos esse campo pra mostrar a entrada), e também dá pra trocar
+  de entrada direto pelo seletor de fonte do próprio card (`source`/
+  `source_list`), além dos switches por entrada abaixo.
 - **Switch de power da zona** — o mesmo `ZSTDBYON`/`ZSTDBYOFF`, só que como
   uma entidade separada e sempre visível, com ícone que muda conforme o
   estado (`mdi:speaker` ligado / `mdi:speaker-off` desligado), útil em
@@ -137,11 +141,12 @@ pip install -r requirements_test.txt
 pytest
 ```
 
-45 testes, cobrindo: framing/sequencial/GETALL/mensagens não
+51 testes, cobrindo: framing/sequencial/GETALL/mensagens não
 solicitadas/timeouts do protocolo (`test_api_protocol.py`), parsing de
-estado por zona e todos os handlers de push (`test_device_state.py`), e a
+estado por zona e todos os handlers de push (`test_device_state.py`), a
 tradução dos erros do protocolo em mensagens amigáveis, incluindo a
-ressincronização automática após uma falha (`test_device_errors.py`).
+ressincronização automática após uma falha (`test_device_errors.py`), e as
+propriedades/seleção de fonte do `media_player` (`test_media_player.py`).
 
 Uma exceção documentada: o manual nunca mostra os bytes exatos de uma
 resposta de erro (só o significado de cada código, ex. "17 - zona

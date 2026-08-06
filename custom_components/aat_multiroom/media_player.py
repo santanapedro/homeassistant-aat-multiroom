@@ -6,6 +6,16 @@ never poll and reflect changes made anywhere (Home Assistant, the front
 panel, the IR remote) almost instantly. Commands issued from Home Assistant
 also update the local cache optimistically before the device confirms them,
 so the UI reacts the moment you tap something.
+
+The current input is exposed two ways here: as `media_title` (the field
+most dashboard cards render as secondary/subtitle text under the entity
+name - there's no real "now playing" track since this is an amplifier
+zone, not a media source, so we repurpose it for the input name, which is
+standard practice for AVR-style integrations), and as a selectable
+`source` (SELECT_SOURCE), so the input can be changed from the
+media_player card itself. This is in addition to, not a replacement for,
+the per-input switch.* entities in switch.py, which stay as the
+always-visible, "painted when active" way to do the same thing.
 """
 
 from __future__ import annotations
@@ -62,6 +72,7 @@ class AatZoneMediaPlayer(MediaPlayerEntity):
             | MediaPlayerEntityFeature.VOLUME_SET
             | MediaPlayerEntityFeature.VOLUME_STEP
             | MediaPlayerEntityFeature.VOLUME_MUTE
+            | MediaPlayerEntityFeature.SELECT_SOURCE
         )
 
     async def async_added_to_hass(self) -> None:
@@ -103,6 +114,25 @@ class AatZoneMediaPlayer(MediaPlayerEntity):
             return None
         input_names = self._entry.options.get(CONF_INPUT_NAMES, {})
         return input_names.get(str(zone.input), f"Entrada {zone.input}")
+
+    @property
+    def media_title(self) -> str | None:
+        # Shown as secondary/subtitle text by most cards; there's no real
+        # "now playing" track on an amplifier zone, so this doubles up as
+        # the current-input display.
+        return self.source
+
+    @property
+    def source_list(self) -> list[str] | None:
+        input_names = self._entry.options.get(CONF_INPUT_NAMES, {})
+        return [input_names[key] for key in sorted(input_names, key=int)]
+
+    async def async_select_source(self, source: str) -> None:
+        input_names = self._entry.options.get(CONF_INPUT_NAMES, {})
+        for input_num, name in input_names.items():
+            if name == source:
+                await self._device.async_select_input(self._zone_num, int(input_num))
+                return
 
     async def async_turn_on(self) -> None:
         await self._device.async_zone_power(self._zone_num, True)
