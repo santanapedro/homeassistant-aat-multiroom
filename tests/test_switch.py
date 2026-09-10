@@ -18,6 +18,7 @@ class FakeDevice:
     model = "PMR7"
     connected = True
     signal = "aat_multiroom_test_update"
+    hub_device_id = None
 
     def __init__(self, zones: dict[int, ZoneState] | None = None, power: bool = True) -> None:
         self.zones = zones if zones is not None else {}

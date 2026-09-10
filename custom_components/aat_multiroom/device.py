@@ -68,6 +68,10 @@ class AatMultiroomDevice:
         self.zone_count = 0
         self.zones: dict[int, ZoneState] = {}
         self.power: bool = True
+        # Set by __init__.py right after registering the hub device, before
+        # any entity is constructed - lets zone entities put via_device_id
+        # in their DeviceInfo alongside the older via_device tuple.
+        self.hub_device_id: str | None = None
 
         self.client = AatMultiroomClient(self.host, self.port)
         self.client.add_listener(self._on_message)

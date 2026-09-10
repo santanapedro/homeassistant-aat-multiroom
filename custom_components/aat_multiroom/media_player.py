@@ -27,12 +27,12 @@ from homeassistant.components.media_player import (
 )
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
-from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .const import CONF_INPUT_NAMES, CONF_ZONE_NAMES, DOMAIN, MAX_VOLUME
 from .device import AatMultiroomDevice
+from .entity import zone_device_info
 
 
 async def async_setup_entry(
@@ -59,13 +59,7 @@ class AatZoneMediaPlayer(MediaPlayerEntity):
 
         zone_name = entry.options.get(CONF_ZONE_NAMES, {}).get(str(zone_num), f"Zona {zone_num}")
         self._attr_unique_id = f"{entry.entry_id}_zone_{zone_num}_media_player"
-        self._attr_device_info = DeviceInfo(
-            identifiers={(DOMAIN, f"{entry.entry_id}_zone_{zone_num}")},
-            name=zone_name,
-            manufacturer="AAT - Advanced Audio Technologies",
-            model=device.model,
-            via_device=(DOMAIN, entry.entry_id),
-        )
+        self._attr_device_info = zone_device_info(device, entry, zone_num, zone_name)
         self._attr_supported_features = (
             MediaPlayerEntityFeature.TURN_ON
             | MediaPlayerEntityFeature.TURN_OFF

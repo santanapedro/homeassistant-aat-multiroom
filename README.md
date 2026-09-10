@@ -112,6 +112,13 @@ criado/atualizado — o resto da integração continua funcionando
 normalmente, e você sempre pode montar o dashboard manualmente com as
 entidades `media_player`/`switch`/`sensor` de cada zona.
 
+Aliás, isso já aconteceu uma vez em produção: numa versão mais nova do
+Home Assistant, `hass.data["lovelace"]` deixou de ser um dicionário
+simples e virou um objeto com atributos — o log mostrou só o aviso
+esperado, o controle das zonas seguiu normal, e o código foi corrigido
+pra funcionar com os dois formatos (`_get_field` em `dashboard.py`).
+Exatamente o comportamento que esse design defensivo deveria ter.
+
 ## Múltiplos multirooms
 
 Repita o processo de adicionar integração para cada amplificador AAT que
@@ -184,15 +191,17 @@ rebaixar/trocar o `pytest`/`pytest-asyncio` global e quebrar a suíte deste
 projeto sem nenhuma mudança de código aqui (foi exatamente o que
 aconteceu durante o desenvolvimento).
 
-86 testes, cobrindo: framing/sequencial/GETALL/mensagens não
+89 testes, cobrindo: framing/sequencial/GETALL/mensagens não
 solicitadas/timeouts/conexão travada do protocolo (`test_api_protocol.py`),
 parsing de estado por zona e todos os handlers de push
 (`test_device_state.py`), a tradução dos erros do protocolo em mensagens
 amigáveis (`test_device_errors.py`), sinal por zona vs. geral / loops de
 fundo resilientes a erro / resync concorrente / `async_close` limpo
 (`test_device_reliability.py`), as entidades `media_player`, `switch` e
-`sensor` (`test_media_player.py`, `test_switch.py`, `test_sensor.py`), e o
-dashboard automático (`test_dashboard.py`).
+`sensor` (`test_media_player.py`, `test_switch.py`, `test_sensor.py`), o
+dashboard automático incluindo o formato mais novo de
+`hass.data["lovelace"]` (`test_dashboard.py`), e o DeviceInfo compartilhado
+com `via_device`/`via_device_id` (`test_entity.py`).
 
 Um workflow de CI (`.github/workflows/validate.yml`) roda essa suíte, o
 `hassfest` oficial do Home Assistant e a validação do HACS a cada push.

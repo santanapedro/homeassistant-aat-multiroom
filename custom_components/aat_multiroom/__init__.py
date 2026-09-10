@@ -45,13 +45,16 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = device
 
     device_registry = dr.async_get(hass)
-    device_registry.async_get_or_create(
+    hub_device = device_registry.async_get_or_create(
         config_entry_id=entry.entry_id,
         identifiers={(DOMAIN, entry.entry_id)},
         name=entry.title,
         manufacturer="AAT - Advanced Audio Technologies",
         model=device.model,
     )
+    # Used by every zone entity's DeviceInfo.via_device_id (in addition to
+    # the older via_device identifiers tuple, for backward compatibility).
+    device.hub_device_id = hub_device.id
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     entry.async_on_unload(entry.add_update_listener(_async_update_listener))

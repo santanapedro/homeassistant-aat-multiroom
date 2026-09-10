@@ -151,6 +151,20 @@ def make_lovelace_hass_data() -> tuple[SimpleNamespace, dict, FakeDashboardsColl
     return hass, dashboards, collection
 
 
+def make_lovelace_hass_data_attribute_style() -> tuple[SimpleNamespace, dict, FakeDashboardsCollection]:
+    """Some Home Assistant versions store `hass.data["lovelace"]` as a
+    plain dict (`make_lovelace_hass_data` above); others as an
+    attribute-based object (e.g. a dataclass named `LovelaceData`) with
+    the exact same field names. This reproduces a real bug caught live:
+    `_get_field` must handle both without needing to know which one a
+    given HA version uses."""
+    dashboards: dict = {}
+    collection = FakeDashboardsCollection(dashboards)
+    lovelace_data = SimpleNamespace(dashboards_collection=collection, dashboards=dashboards)
+    hass = SimpleNamespace(data={"lovelace": lovelace_data})
+    return hass, dashboards, collection
+
+
 async def test_ensure_dashboard_creates_dashboard_when_missing(monkeypatch) -> None:
     hass, dashboards, collection = make_lovelace_hass_data()
     monkeypatch.setattr(
@@ -171,6 +185,26 @@ async def test_ensure_dashboard_creates_dashboard_when_missing(monkeypatch) -> N
             "url_path": DASHBOARD_URL_PATH,
         }
     ]
+    store = dashboards[DASHBOARD_URL_PATH]
+    assert store.saved["views"][0]["path"] == "multiroom-entry1"
+
+
+async def test_ensure_dashboard_works_when_lovelace_data_is_attribute_based(monkeypatch) -> None:
+    """Regression test for a bug caught live: on some HA versions
+    hass.data["lovelace"] is an attribute-based object, not a dict."""
+    hass, dashboards, collection = make_lovelace_hass_data_attribute_style()
+    monkeypatch.setattr(
+        "custom_components.aat_multiroom.dashboard.er.async_get",
+        lambda hass: SimpleNamespace(async_get_entity_id=lambda *a: None),
+    )
+    monkeypatch.setattr(
+        "custom_components.aat_multiroom.dashboard._build_view",
+        lambda *a, **k: {"path": "multiroom-entry1", "title": "x", "cards": [{"type": "tile"}]},
+    )
+
+    await async_ensure_dashboard(hass, make_entry(), FakeDevice({1: ZoneState()}))
+
+    assert collection.created  # the dashboard got created despite the attribute-based container
     store = dashboards[DASHBOARD_URL_PATH]
     assert store.saved["views"][0]["path"] == "multiroom-entry1"
 
