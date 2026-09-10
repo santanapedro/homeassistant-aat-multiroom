@@ -147,6 +147,16 @@ painel na barra lateral só acontece durante o setup do próprio
 criação precisa desse reinício; atualizações de zonas/entradas depois
 disso aplicam na hora.
 
+Um quarto detalhe, pego na mesma leva: o armazenamento próprio de cada
+dashboard não guarda o config de views direto — o `LovelaceStorage` do
+Home Assistant embrulha um nível a mais, `{"config": {"views": [...]}}`,
+e é assim que o próprio comando `lovelace/config` lê de volta. Gravar o
+dict de views sem esse embrulho deixava o dashboard criado e o painel
+registrado certinho na barra lateral, mas quebrava o carregamento do
+conteúdo (`KeyError: 'config'`) assim que qualquer coisa — inclusive o
+frontend — tentava abrir a página. Corrigido casando exatamente esse
+formato.
+
 ## Múltiplos multirooms
 
 Repita o processo de adicionar integração para cada amplificador AAT que

@@ -29,6 +29,17 @@ the dashboard exists (after that first restart), updating its views
 (renames, new zones, IP reconfiguration) applies immediately, with no
 further restart - only the very first creation needs one.
 
+A second live-caught gotcha in the same approach: the per-dashboard
+Store's on-disk shape isn't the views config directly - Home Assistant's
+own `LovelaceStorage` wraps it one level deeper, as
+`{"config": {"views": [...]}}`, and its own `lovelace/config` websocket
+command reads it back the same way (`self._data["config"]`). Writing the
+views dict unwrapped left the dashboard entry created and its sidebar
+panel registered correctly, but crashed Home Assistant's own dashboard
+loader with `KeyError: 'config'` the moment anything (the frontend
+included) tried to actually read the dashboard's content. Fixed by
+matching that wrapper exactly.
+
 Because this still reaches into another component's internals (there is
 no deprecation policy protecting it, and it already changed shape once
 between HA versions), every step here stays defensive: any failure is
@@ -136,8 +147,19 @@ async def _async_ensure_dashboard(
         _LOGGER.debug("No entities found yet for %s; skipping dashboard view", entry.title)
         return
 
+    # Home Assistant's own LovelaceStorage wraps the actual views/cards
+    # config under a "config" key on disk - {"config": {"views": [...]}},
+    # not the views dict directly - and reads it back the same way
+    # (dashboard.py's `_async_build_json` does `self._data["config"]`,
+    # raising KeyError otherwise). Confirmed live: writing the views dict
+    # unwrapped left the dashboard entry created and its panel registered,
+    # but Home Assistant's own "lovelace/config" command crashed with
+    # `KeyError: 'config'` trying to read it back - so this must match
+    # that wrapper exactly, not just be "a config dict".
     current = await store.async_load()
-    config: dict[str, Any] = current or {}
+    wrapper: dict[str, Any] = current or {}
+    config: dict[str, Any] = wrapper.setdefault("config", {}) or {}
+    wrapper["config"] = config
     views: list[dict[str, Any]] = config.setdefault("views", [])
 
     for i, existing_view in enumerate(views):
@@ -147,7 +169,7 @@ async def _async_ensure_dashboard(
     else:
         views.append(view)
 
-    await store.async_save(config)
+    await store.async_save(wrapper)
 
 
 def _build_view(

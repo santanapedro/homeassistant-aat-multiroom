@@ -215,7 +215,11 @@ async def test_ensure_dashboard_creates_dashboard_when_missing(monkeypatch) -> N
         }
     ]
     saved = hass.data["_fake_store_backing"][f"lovelace.{DASHBOARD_URL_PATH}"]
-    assert saved["views"][0]["path"] == "multiroom-entry1"
+    # Must match Home Assistant's own LovelaceStorage on-disk shape - the
+    # views config wrapped one level deeper under "config" - or its
+    # "lovelace/config" websocket command crashes reading it back (caught
+    # live: KeyError('config') - see dashboard.py's module docstring).
+    assert saved["config"]["views"][0]["path"] == "multiroom-entry1"
 
 
 async def test_ensure_dashboard_does_not_recreate_existing_dashboard(monkeypatch) -> None:
@@ -248,7 +252,9 @@ async def test_ensure_dashboard_updates_its_own_view_without_touching_others(mon
     other_view = {"path": "multiroom-other-entry", "title": "Other", "cards": []}
     old_view_for_this_entry = {"path": "multiroom-entry1", "title": "old title", "cards": []}
     hass.data["_fake_store_backing"] = {
-        f"lovelace.{DASHBOARD_URL_PATH}": {"views": [other_view, old_view_for_this_entry]}
+        f"lovelace.{DASHBOARD_URL_PATH}": {
+            "config": {"views": [other_view, old_view_for_this_entry]}
+        }
     }
 
     monkeypatch.setattr(
@@ -262,7 +268,7 @@ async def test_ensure_dashboard_updates_its_own_view_without_touching_others(mon
 
     await async_ensure_dashboard(hass, make_entry(), FakeDevice({1: ZoneState()}))
 
-    views = hass.data["_fake_store_backing"][f"lovelace.{DASHBOARD_URL_PATH}"]["views"]
+    views = hass.data["_fake_store_backing"][f"lovelace.{DASHBOARD_URL_PATH}"]["config"]["views"]
     assert len(views) == 2
     assert other_view in views  # untouched
     assert {"path": "multiroom-entry1", "title": "new title", "cards": []} in views
