@@ -119,6 +119,17 @@ esperado, o controle das zonas seguiu normal, e o código foi corrigido
 pra funcionar com os dois formatos (`_get_field` em `dashboard.py`).
 Exatamente o comportamento que esse design defensivo deveria ter.
 
+Um segundo problema, esse sim mais sério, apareceu na mesma leva de
+testes em produção: para eliminar um aviso de depreciação do parâmetro
+`via_device` do `DeviceInfo` (substituído por `via_device_id`), a
+correção inicial passou a enviar os dois ao mesmo tempo — o que numa
+versão mais nova do Home Assistant não é só um aviso, é um erro fatal
+(`HomeAssistantError: Passing both via_device and via_device_id is not
+allowed`), e derrubou a criação de toda entidade `media_player`/
+`switch`/`sensor` das zonas. Corrigido enviando exatamente um dos dois
+(`via_device_id` quando o id do hub já é conhecido, `via_device` como
+fallback) — nunca os dois juntos (`entity.py`, `test_entity.py`).
+
 ## Múltiplos multirooms
 
 Repita o processo de adicionar integração para cada amplificador AAT que

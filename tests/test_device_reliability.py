@@ -27,6 +27,7 @@ def make_hass():
         verify_event_loop_thread=lambda *args, **kwargs: None,
     )
     hass.async_create_task = lambda coro, name=None: asyncio.ensure_future(coro)
+    hass.async_create_background_task = lambda coro, name=None, **kwargs: asyncio.ensure_future(coro)
     return hass
 
 

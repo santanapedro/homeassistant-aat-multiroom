@@ -123,7 +123,9 @@ class AatMultiroomDevice:
     async def async_setup(self) -> None:
         await self.client.async_connect()
         await self.async_refresh_full_state()
-        self._refresh_task = self.hass.async_create_task(self._periodic_refresh())
+        self._refresh_task = self.hass.async_create_background_task(
+            self._periodic_refresh(), name=f"aat_multiroom_periodic_refresh_{self.host}"
+        )
 
     async def async_close(self) -> None:
         self._closing = True
@@ -163,7 +165,9 @@ class AatMultiroomDevice:
         if self._closing:
             return
         if self._reconnect_task is None or self._reconnect_task.done():
-            self._reconnect_task = self.hass.async_create_task(self._reconnect_loop())
+            self._reconnect_task = self.hass.async_create_background_task(
+                self._reconnect_loop(), name=f"aat_multiroom_reconnect_{self.host}"
+            )
 
     async def _reconnect_loop(self) -> None:
         delay = _RECONNECT_MIN_DELAY
