@@ -238,3 +238,57 @@ async def test_disconnect_fails_pending_commands(
     await client.async_disconnect()
     with pytest.raises(AatConnectionError):
         await pending
+
+
+# ---------------------------------------------------------------------
+# Hung connection: the socket never errors, but the device stops
+# replying to anything - a plain "did the socket error?" check would
+# never notice this.
+# ---------------------------------------------------------------------
+
+
+async def test_hung_connection_forces_a_reconnect_after_max_timeouts(
+    client: AatMultiroomClient,
+) -> None:
+    # No script entries at all -> the fake server never answers anything,
+    # simulating a wedged device that still holds the TCP connection open.
+    disconnected: list[bool] = []
+    client.on_disconnected = lambda: disconnected.append(True)
+
+    from custom_components.aat_multiroom.api import _MAX_CONSECUTIVE_TIMEOUTS
+
+    for _ in range(_MAX_CONSECUTIVE_TIMEOUTS):
+        with pytest.raises(AatConnectionError):
+            await client.async_send_command("VOLGET", 1, timeout=0.05)
+
+    # Closing our own transport unblocks the reader loop's pending read()
+    # with EOF; give it a moment to run its cleanup.
+    for _ in range(50):
+        if not client.connected:
+            break
+        await asyncio.sleep(0.01)
+
+    assert client.connected is False
+    assert disconnected == [True]
+
+
+async def test_timeout_counter_resets_after_a_successful_reply(
+    server: FakeAatServer, client: AatMultiroomClient
+) -> None:
+    """Only *consecutive* timeouts should count - one timeout followed by
+    a real reply must not carry over toward the hang threshold."""
+    disconnected: list[bool] = []
+    client.on_disconnected = lambda: disconnected.append(True)
+
+    with pytest.raises(AatConnectionError):
+        await client.async_send_command("VOLGET", 1, timeout=0.05)  # no script -> times out
+
+    server.script["PWRGET"] = "PWRGET ON"
+    assert await client.async_send_command("PWRGET") == ["ON"]  # succeeds -> resets counter
+
+    with pytest.raises(AatConnectionError):
+        await client.async_send_command("VOLGET", 1, timeout=0.05)
+
+    await asyncio.sleep(0.05)
+    assert client.connected is True  # only 2 timeouts total since the reset
+    assert disconnected == []

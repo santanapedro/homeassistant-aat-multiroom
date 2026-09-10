@@ -45,7 +45,13 @@ async def async_setup_entry(
 
 
 class _AatSwitchBase(SwitchEntity):
-    """Shared push-update wiring for every switch type."""
+    """Shared push-update wiring for every switch type.
+
+    Subclasses that belong to a single zone override `_signal` to that
+    zone's own dispatcher signal, so a change in one zone doesn't
+    re-render every switch of every other zone too. The master power
+    switch is device-wide, so it keeps the default (the device's own
+    signal, which also fires on any connectivity change)."""
 
     _attr_has_entity_name = True
     _attr_should_poll = False
@@ -53,9 +59,13 @@ class _AatSwitchBase(SwitchEntity):
     def __init__(self, device: AatMultiroomDevice) -> None:
         self._device = device
 
+    @property
+    def _signal(self) -> str:
+        return self._device.signal
+
     async def async_added_to_hass(self) -> None:
         self.async_on_remove(
-            async_dispatcher_connect(self.hass, self._device.signal, self._handle_update)
+            async_dispatcher_connect(self.hass, self._signal, self._handle_update)
         )
 
     @callback
@@ -116,6 +126,10 @@ class AatZonePowerSwitch(_AatSwitchBase):
         )
 
     @property
+    def _signal(self) -> str:
+        return self._device.zone_signal(self._zone_num)
+
+    @property
     def is_on(self) -> bool:
         zone = self._device.zones.get(self._zone_num)
         return False if zone is None else not zone.standby
@@ -154,6 +168,10 @@ class AatInputSwitch(_AatSwitchBase):
             model=device.model,
             via_device=(DOMAIN, entry.entry_id),
         )
+
+    @property
+    def _signal(self) -> str:
+        return self._device.zone_signal(self._zone_num)
 
     @property
     def is_on(self) -> bool:

@@ -24,6 +24,14 @@ _LOGGER = logging.getLogger(__name__)
 
 _HEADER_RE = re.compile(r"^\s*([trn])\s*0*?(\d{1,3})\s+(.*)$", re.IGNORECASE)
 
+# If this many commands in a row time out with no reply at all, the TCP
+# socket is probably "hung" (still open at the transport level, but the
+# device's firmware stopped answering) rather than genuinely busy. A
+# regular disconnect is detected by the reader loop seeing EOF/an error;
+# a hang looks identical to "connected" from that angle, so nothing would
+# ever trigger a reconnect without this counter.
+_MAX_CONSECUTIVE_TIMEOUTS = 3
+
 MessageListener = Callable[[str, list[str]], None]
 
 
@@ -54,6 +62,7 @@ class AatMultiroomClient:
         self._listeners: list[MessageListener] = []
         self._buffer = ""
         self._connected = False
+        self._consecutive_timeouts = 0
 
         # Called (no args) whenever the connection is lost unexpectedly.
         self.on_disconnected: Callable[[], None] | None = None
@@ -77,6 +86,7 @@ class AatMultiroomClient:
             raise AatConnectionError(str(err)) from err
         self._buffer = ""
         self._connected = True
+        self._consecutive_timeouts = 0
         self._read_task = asyncio.create_task(self._reader_loop())
 
     async def async_disconnect(self) -> None:
@@ -119,10 +129,32 @@ class AatMultiroomClient:
                 raise AatConnectionError(str(err)) from err
 
         try:
-            return await asyncio.wait_for(fut, timeout)
+            result = await asyncio.wait_for(fut, timeout)
         except asyncio.TimeoutError as err:
             self._pending.pop(seq, None)
+            self._consecutive_timeouts += 1
+            if self._consecutive_timeouts >= _MAX_CONSECUTIVE_TIMEOUTS:
+                _LOGGER.warning(
+                    "%s consecutive command timeouts on %s:%s with no reply at all - "
+                    "the connection looks hung, forcing a reconnect",
+                    self._consecutive_timeouts,
+                    self._host,
+                    self._port,
+                )
+                self._force_disconnect_after_hang()
             raise AatConnectionError(f"timeout waiting for reply to {command}") from err
+        self._consecutive_timeouts = 0
+        return result
+
+    def _force_disconnect_after_hang(self) -> None:
+        """Close the transport without touching _connected/_pending/
+        on_disconnected here - closing it unblocks the reader loop's
+        pending read() with EOF/OSError, and its own `finally` block
+        already does that cleanup (fail pending futures, flip _connected,
+        fire on_disconnected exactly once)."""
+        self._consecutive_timeouts = 0
+        if self._writer is not None:
+            self._writer.close()
 
     async def _reader_loop(self) -> None:
         try:

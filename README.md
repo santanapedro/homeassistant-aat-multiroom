@@ -113,6 +113,21 @@ um multiroom cair, travar ou ser reconfigurado não afeta os outros.
   um ciclo de atualização.
 - Existe também uma sincronização periódica de segurança (a cada 30s) e
   reconexão automática com backoff, caso a conexão caia.
+- **Conexão "travada" é detectada**: se o socket ficar aberto mas o
+  aparelho parar de responder (firmware travado, por exemplo), depois de
+  3 timeouts seguidos a integração força o fechamento e reconecta — em
+  vez de ficar tentando pra sempre contra uma conexão que só *parece*
+  saudável.
+- **Sinal de atualização por zona**: mudar algo numa zona só notifica as
+  entidades daquela zona (não as 40+ entidades de um multiroom de 6
+  zonas inteiro); mudanças que afetam tudo (conectividade, power geral)
+  continuam notificando todo mundo.
+- **Resyncs concorrentes são unificados**: se vários comandos falharem
+  quase ao mesmo tempo, só um resync completo roda por vez, em vez de
+  vários em paralelo martelando o aparelho.
+- As tarefas de fundo (resync periódico, reconexão) sobrevivem a qualquer
+  erro inesperado — antes, uma exceção não prevista podia derrubar esses
+  loops silenciosamente para sempre, até o próximo reinício do HA.
 
 ## Diagnóstico de erros
 
@@ -141,12 +156,17 @@ pip install -r requirements_test.txt
 pytest
 ```
 
-51 testes, cobrindo: framing/sequencial/GETALL/mensagens não
-solicitadas/timeouts do protocolo (`test_api_protocol.py`), parsing de
-estado por zona e todos os handlers de push (`test_device_state.py`), a
-tradução dos erros do protocolo em mensagens amigáveis, incluindo a
-ressincronização automática após uma falha (`test_device_errors.py`), e as
-propriedades/seleção de fonte do `media_player` (`test_media_player.py`).
+77 testes, cobrindo: framing/sequencial/GETALL/mensagens não
+solicitadas/timeouts/conexão travada do protocolo (`test_api_protocol.py`),
+parsing de estado por zona e todos os handlers de push
+(`test_device_state.py`), a tradução dos erros do protocolo em mensagens
+amigáveis (`test_device_errors.py`), sinal por zona vs. geral / loops de
+fundo resilientes a erro / resync concorrente / `async_close` limpo
+(`test_device_reliability.py`), e as entidades `media_player`, `switch` e
+`sensor` (`test_media_player.py`, `test_switch.py`, `test_sensor.py`).
+
+Um workflow de CI (`.github/workflows/validate.yml`) roda essa suíte, o
+`hassfest` oficial do Home Assistant e a validação do HACS a cada push.
 
 Uma exceção documentada: o manual nunca mostra os bytes exatos de uma
 resposta de erro (só o significado de cada código, ex. "17 - zona

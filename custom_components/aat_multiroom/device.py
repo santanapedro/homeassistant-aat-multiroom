@@ -4,9 +4,16 @@ Wraps AatMultiroomClient with:
   * a cache of per-zone state (input/volume/mute/standby)
   * optimistic local updates so the UI reacts instantly to a tap, before the
     device even answers
-  * a dispatcher signal fired on every state change (from our own commands,
-    from unsolicited device messages, or from periodic re-sync)
-  * automatic reconnection with backoff
+  * a dispatcher signal per zone (plus one device-wide signal for the master
+    power switch and connectivity changes), fired on every state change -
+    from our own commands, from unsolicited device messages, or from
+    periodic re-sync - so only the entities that actually need to re-render
+    do
+  * automatic reconnection with backoff, including detection of a "hung"
+    connection (socket still open, device stopped answering)
+  * background tasks (periodic refresh, reconnect loop, failure resync)
+    that never die from an unexpected exception, and are properly awaited
+    on shutdown
 """
 
 from __future__ import annotations
@@ -68,11 +75,19 @@ class AatMultiroomDevice:
 
         self._refresh_task: asyncio.Task | None = None
         self._reconnect_task: asyncio.Task | None = None
+        self._resync_task: asyncio.Task | None = None
         self._closing = False
 
     @property
     def signal(self) -> str:
+        """Device-wide signal: master power, and anything (like a
+        connectivity change) that can affect every entity at once."""
         return f"{DOMAIN}_{self.entry.entry_id}_update"
+
+    def zone_signal(self, zone_num: int) -> str:
+        """Per-zone signal, so a change in one zone doesn't re-render every
+        entity of every other zone too."""
+        return f"{DOMAIN}_{self.entry.entry_id}_zone_{zone_num}_update"
 
     @property
     def connected(self) -> bool:
@@ -80,6 +95,17 @@ class AatMultiroomDevice:
 
     def _notify(self) -> None:
         async_dispatcher_send(self.hass, self.signal)
+
+    def _notify_zone(self, zone_num: int) -> None:
+        async_dispatcher_send(self.hass, self.zone_signal(zone_num))
+
+    def _notify_all(self) -> None:
+        """Device-wide signal plus every zone's own signal - used for
+        connectivity changes and full resyncs, where potentially everything
+        just changed."""
+        self._notify()
+        for zone_num in self.zones:
+            self._notify_zone(zone_num)
 
     def _get_zone(self, zone_num: int) -> ZoneState:
         if zone_num not in self.zones:
@@ -97,9 +123,14 @@ class AatMultiroomDevice:
 
     async def async_close(self) -> None:
         self._closing = True
-        for task in (self._refresh_task, self._reconnect_task):
-            if task is not None:
-                task.cancel()
+        tasks = [t for t in (self._refresh_task, self._reconnect_task, self._resync_task) if t]
+        for task in tasks:
+            task.cancel()
+        if tasks:
+            # Actually wait for cancellation to land, instead of firing it
+            # and moving on - avoids "Task was destroyed but it is pending"
+            # warnings on unload/reload.
+            await asyncio.gather(*tasks, return_exceptions=True)
         await self.client.async_disconnect()
 
     async def _periodic_refresh(self) -> None:
@@ -111,9 +142,20 @@ class AatMultiroomDevice:
                 await self.async_refresh_full_state()
             except AatConnectionError as err:
                 _LOGGER.debug("Periodic refresh failed for %s: %s", self.host, err)
+            except Exception:  # noqa: BLE001
+                # Whatever this was, it must not kill the loop - without it,
+                # nothing keeps zone state in sync ever again until Home
+                # Assistant itself restarts.
+                _LOGGER.exception(
+                    "Unexpected error during periodic refresh for %s; will retry in %ss",
+                    self.host,
+                    REFRESH_INTERVAL,
+                )
 
     def _schedule_reconnect(self) -> None:
-        self._notify()
+        # Connectivity affects every entity's `available` - not just one
+        # zone's - so this needs the broad notify, not a single zone's.
+        self._notify_all()
         if self._closing:
             return
         if self._reconnect_task is None or self._reconnect_task.done():
@@ -125,9 +167,9 @@ class AatMultiroomDevice:
             await asyncio.sleep(delay)
             if self._closing:
                 return
+
             try:
                 await self.client.async_connect()
-                await self.async_refresh_full_state()
             except AatConnectionError as err:
                 _LOGGER.debug(
                     "Reconnect attempt to %s:%s failed (retrying in %ss): %s",
@@ -137,16 +179,46 @@ class AatMultiroomDevice:
                     err,
                 )
                 delay = min(delay * 2, _RECONNECT_MAX_DELAY)
-            else:
-                _LOGGER.info("Reconnected to AAT multiroom %s:%s", self.host, self.port)
-                self._notify()
-                return
+                continue
+            except Exception:  # noqa: BLE001
+                _LOGGER.exception(
+                    "Unexpected error reconnecting to %s:%s (retrying in %ss)",
+                    self.host,
+                    self.port,
+                    delay,
+                )
+                delay = min(delay * 2, _RECONNECT_MAX_DELAY)
+                continue
+
+            # Transport-connected now; entities can already flip back to
+            # available even if the state refresh below hits a snag - the
+            # periodic refresh (or the next push message) will catch up.
+            _LOGGER.info("Reconnected to AAT multiroom %s:%s", self.host, self.port)
+            try:
+                await self.async_refresh_full_state()  # calls _notify_all() itself
+            except AatConnectionError as err:
+                _LOGGER.debug("Initial refresh after reconnect failed for %s: %s", self.host, err)
+                self._notify_all()
+            except Exception:  # noqa: BLE001
+                _LOGGER.exception("Unexpected error refreshing state after reconnect to %s", self.host)
+                self._notify_all()
+            return
 
     # ------------------------------------------------------------------
     # state sync
     # ------------------------------------------------------------------
 
     async def async_refresh_full_state(self) -> None:
+        if self._resync_task is not None and not self._resync_task.done():
+            # A resync is already in flight (e.g. triggered by a failed
+            # command moments ago) - piggyback on it instead of hammering
+            # the device with a second overlapping GETALL/ZSTDBYGET pass.
+            await self._resync_task
+            return
+        self._resync_task = self.hass.async_create_task(self._do_refresh_full_state())
+        await self._resync_task
+
+    async def _do_refresh_full_state(self) -> None:
         args = await self.client.async_send_command("GETALL")
         self._parse_getall(args)
         for zone_num in list(self.zones):
@@ -156,7 +228,7 @@ class AatMultiroomDevice:
                     self.zones[zone_num].standby = zargs[1].upper() == "ON"
             except AatConnectionError:
                 break
-        self._notify()
+        self._notify_all()
 
     def _parse_getall(self, args: list[str]) -> None:
         if len(args) < 5:
@@ -178,6 +250,10 @@ class AatMultiroomDevice:
 
     # ------------------------------------------------------------------
     # push updates (our own replies AND unsolicited device messages)
+    #
+    # Each handler returns the zone number it touched, or None for a
+    # device-wide change (power) - _on_message uses that to fire only the
+    # signal that actually needs to update.
     # ------------------------------------------------------------------
 
     def _on_message(self, cmd: str, args: list[str]) -> None:
@@ -185,55 +261,82 @@ class AatMultiroomDevice:
         if handler is None:
             return
         try:
-            handler(self, args)
+            zone_num = handler(self, args)
         except (ValueError, IndexError):
             _LOGGER.debug("Could not parse %s %s", cmd, args)
             return
-        self._notify()
+        if zone_num is None:
+            self._notify()
+        else:
+            self._notify_zone(zone_num)
 
-    def _h_zstdbyon(self, args: list[str]) -> None:
-        self._get_zone(int(args[0])).standby = True
+    def _h_zstdbyon(self, args: list[str]) -> int:
+        zone = int(args[0])
+        self._get_zone(zone).standby = True
+        return zone
 
-    def _h_zstdbyoff(self, args: list[str]) -> None:
-        self._get_zone(int(args[0])).standby = False
+    def _h_zstdbyoff(self, args: list[str]) -> int:
+        zone = int(args[0])
+        self._get_zone(zone).standby = False
+        return zone
 
-    def _h_zstdbytog(self, args: list[str]) -> None:
-        self._get_zone(int(args[0])).standby = args[1].upper() == "ON"
+    def _h_zstdbytog(self, args: list[str]) -> int:
+        zone = int(args[0])
+        self._get_zone(zone).standby = args[1].upper() == "ON"
+        return zone
 
-    def _h_zstdbyget(self, args: list[str]) -> None:
-        self._get_zone(int(args[0])).standby = args[1].upper() == "ON"
+    def _h_zstdbyget(self, args: list[str]) -> int:
+        zone = int(args[0])
+        self._get_zone(zone).standby = args[1].upper() == "ON"
+        return zone
 
-    def _h_muteon(self, args: list[str]) -> None:
-        self._get_zone(int(args[0])).mute = True
+    def _h_muteon(self, args: list[str]) -> int:
+        zone = int(args[0])
+        self._get_zone(zone).mute = True
+        return zone
 
-    def _h_muteoff(self, args: list[str]) -> None:
-        self._get_zone(int(args[0])).mute = False
+    def _h_muteoff(self, args: list[str]) -> int:
+        zone = int(args[0])
+        self._get_zone(zone).mute = False
+        return zone
 
-    def _h_mutetog(self, args: list[str]) -> None:
-        self._get_zone(int(args[0])).mute = args[1].upper() == "ON"
+    def _h_mutetog(self, args: list[str]) -> int:
+        zone = int(args[0])
+        self._get_zone(zone).mute = args[1].upper() == "ON"
+        return zone
 
-    def _h_muteget(self, args: list[str]) -> None:
-        self._get_zone(int(args[0])).mute = args[1].upper() == "ON"
+    def _h_muteget(self, args: list[str]) -> int:
+        zone = int(args[0])
+        self._get_zone(zone).mute = args[1].upper() == "ON"
+        return zone
 
-    def _h_volchange(self, args: list[str]) -> None:
-        self._get_zone(int(args[0])).volume = int(args[1])
+    def _h_volchange(self, args: list[str]) -> int:
+        zone = int(args[0])
+        self._get_zone(zone).volume = int(args[1])
+        return zone
 
-    def _h_inpchange(self, args: list[str]) -> None:
-        self._get_zone(int(args[0])).input = int(args[1])
+    def _h_inpchange(self, args: list[str]) -> int:
+        zone = int(args[0])
+        self._get_zone(zone).input = int(args[1])
+        return zone
 
     def _h_pwron(self, args: list[str]) -> None:
         self.power = True
+        return None
 
     def _h_pwroff(self, args: list[str]) -> None:
         self.power = False
+        return None
 
     def _h_pwrtog(self, args: list[str]) -> None:
         self.power = args[0].upper() == "ON"
+        return None
 
     def _h_pwrget(self, args: list[str]) -> None:
         self.power = args[0].upper() == "ON"
+        return None
 
-    _HANDLERS: dict[str, Callable[["AatMultiroomDevice", list[str]], None]] = {
+    _HANDLERS: dict[str, Callable[["AatMultiroomDevice", list[str]], int | None]] = {
         "ZSTDBYON": _h_zstdbyon,
         "ZSTDBYOFF": _h_zstdbyoff,
         "ZSTDBYTOG": _h_zstdbytog,
@@ -259,10 +362,17 @@ class AatMultiroomDevice:
     # ------------------------------------------------------------------
 
     async def _run_command(
-        self, apply_optimistic: Callable[[], None], cmd: str, *args: object
+        self,
+        apply_optimistic: Callable[[], None],
+        cmd: str,
+        *args: object,
+        zone: int | None = None,
     ) -> None:
         apply_optimistic()
-        self._notify()
+        if zone is None:
+            self._notify()
+        else:
+            self._notify_zone(zone)
         try:
             await self.client.async_send_command(cmd, *args)
         except AatCommandError as err:
@@ -292,7 +402,7 @@ class AatMultiroomDevice:
         def _apply() -> None:
             self._get_zone(zone).standby = not on
 
-        await self._run_command(_apply, "ZSTDBYOFF" if on else "ZSTDBYON", zone)
+        await self._run_command(_apply, "ZSTDBYOFF" if on else "ZSTDBYON", zone, zone=zone)
 
     async def async_set_volume(self, zone: int, volume: int) -> None:
         volume = max(0, min(MAX_VOLUME, volume))
@@ -300,7 +410,7 @@ class AatMultiroomDevice:
         def _apply() -> None:
             self._get_zone(zone).volume = volume
 
-        await self._run_command(_apply, "VOLSET", zone, volume)
+        await self._run_command(_apply, "VOLSET", zone, volume, zone=zone)
 
     async def async_volume_step(self, zone: int, up: bool) -> None:
         def _apply() -> None:
@@ -310,19 +420,19 @@ class AatMultiroomDevice:
             else:
                 zone_state.volume = max(0, zone_state.volume - 1)
 
-        await self._run_command(_apply, "VOL+" if up else "VOL-", zone)
+        await self._run_command(_apply, "VOL+" if up else "VOL-", zone, zone=zone)
 
     async def async_set_mute(self, zone: int, mute: bool) -> None:
         def _apply() -> None:
             self._get_zone(zone).mute = mute
 
-        await self._run_command(_apply, "MUTEON" if mute else "MUTEOFF", zone)
+        await self._run_command(_apply, "MUTEON" if mute else "MUTEOFF", zone, zone=zone)
 
     async def async_select_input(self, zone: int, input_num: int) -> None:
         def _apply() -> None:
             self._get_zone(zone).input = input_num
 
-        await self._run_command(_apply, "INPSET", zone, input_num)
+        await self._run_command(_apply, "INPSET", zone, input_num, zone=zone)
 
     async def async_master_power(self, on: bool) -> None:
         def _apply() -> None:
