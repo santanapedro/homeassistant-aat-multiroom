@@ -1,11 +1,12 @@
 {
   "domain": "aat_multiroom",
   "name": "AAT Multiroom",
+  "after_dependencies": ["lovelace"],
   "codeowners": [],
   "config_flow": true,
   "documentation": "https://www.aataudio.com.br",
   "integration_type": "hub",
   "iot_class": "local_push",
   "requirements": [],
-  "version": "0.9.0"
+  "version": "0.10.0"
 }

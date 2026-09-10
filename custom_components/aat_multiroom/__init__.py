@@ -18,6 +18,7 @@ from homeassistant.helpers import device_registry as dr
 
 from .api import AatConnectionError
 from .const import DOMAIN
+from .dashboard import async_ensure_dashboard
 from .device import AatMultiroomDevice
 
 _LOGGER = logging.getLogger(__name__)
@@ -54,6 +55,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     entry.async_on_unload(entry.add_update_listener(_async_update_listener))
+
+    # Best-effort convenience dashboard; never blocks or fails setup - see
+    # dashboard.py's module docstring for why this is scheduled instead of
+    # awaited inline, and why it's wrapped so defensively.
+    hass.async_create_task(async_ensure_dashboard(hass, entry, device))
+
     return True
 
 

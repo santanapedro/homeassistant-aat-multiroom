@@ -92,6 +92,26 @@ Vá no card da integração → menu (⋮) → **Reconfigurar**, e informe o nov
 IP. Isso atualiza a conexão sem apagar a integração — nomes de zonas,
 entradas e o histórico das entidades são mantidos.
 
+## Dashboard automático
+
+Assim que o multiroom conecta, a integração cria (ou atualiza) sozinha um
+dashboard chamado **"AAT Multiroom"** no menu lateral, com uma aba por
+multiroom cadastrado e, dentro dela, um card por zona (media_player +
+switch de power + switches de entrada). Zero passo manual — nem você nem
+o cliente precisam montar nada na mão pra ter um dashboard funcional
+assim que a integração é configurada. Renomear zonas/entradas ou
+reconfigurar o IP atualiza esse dashboard automaticamente também.
+
+Isso usa um mecanismo interno do Home Assistant (o mesmo que ele usa pra
+criar sozinho o dashboard embutido de Mapa) — **não é uma API pública**,
+então é tratado como funcionalidade best-effort: qualquer falha aqui fica
+só um aviso no log e nunca afeta o controle das zonas em si. Se numa
+versão futura do Home Assistant esse mecanismo interno mudar de forma
+incompatível, o pior cenário é o dashboard automático parar de ser
+criado/atualizado — o resto da integração continua funcionando
+normalmente, e você sempre pode montar o dashboard manualmente com as
+entidades `media_player`/`switch`/`sensor` de cada zona.
+
 ## Múltiplos multirooms
 
 Repita o processo de adicionar integração para cada amplificador AAT que
@@ -152,18 +172,27 @@ servidor TCP fake local — não precisa de hardware físico nem de uma
 instância do Home Assistant rodando.
 
 ```bash
+python -m venv .venv
+.venv/Scripts/activate   # Windows; no Linux/macOS: source .venv/bin/activate
 pip install -r requirements_test.txt
 pytest
 ```
 
-77 testes, cobrindo: framing/sequencial/GETALL/mensagens não
+Use um ambiente virtual (`.venv`), não o Python global — se essa máquina
+tiver outros projetos de Home Assistant, um `pip install` feito lá pode
+rebaixar/trocar o `pytest`/`pytest-asyncio` global e quebrar a suíte deste
+projeto sem nenhuma mudança de código aqui (foi exatamente o que
+aconteceu durante o desenvolvimento).
+
+86 testes, cobrindo: framing/sequencial/GETALL/mensagens não
 solicitadas/timeouts/conexão travada do protocolo (`test_api_protocol.py`),
 parsing de estado por zona e todos os handlers de push
 (`test_device_state.py`), a tradução dos erros do protocolo em mensagens
 amigáveis (`test_device_errors.py`), sinal por zona vs. geral / loops de
 fundo resilientes a erro / resync concorrente / `async_close` limpo
-(`test_device_reliability.py`), e as entidades `media_player`, `switch` e
-`sensor` (`test_media_player.py`, `test_switch.py`, `test_sensor.py`).
+(`test_device_reliability.py`), as entidades `media_player`, `switch` e
+`sensor` (`test_media_player.py`, `test_switch.py`, `test_sensor.py`), e o
+dashboard automático (`test_dashboard.py`).
 
 Um workflow de CI (`.github/workflows/validate.yml`) roda essa suíte, o
 `hassfest` oficial do Home Assistant e a validação do HACS a cada push.
