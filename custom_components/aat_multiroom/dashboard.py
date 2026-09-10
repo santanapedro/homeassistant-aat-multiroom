@@ -1,25 +1,41 @@
 """Best-effort automatic Lovelace dashboard for AAT Multiroom.
 
 Home Assistant has no *public* API for a custom integration to create or
-update a dashboard - this uses the same internal mechanism Home Assistant
-Core itself uses to auto-provision the built-in "Map" dashboard
-(homeassistant/components/lovelace/__init__.py's `_create_map_dashboard`):
-`hass.data["lovelace"]` holding a `dashboards_collection` (to create the
-dashboard) and a `dashboards` mapping (each entry's own storage object,
-used to write its views/cards).
+update a dashboard. Two internal approaches were tried here, in sequence,
+both discovered live against a real running instance:
 
-Because this reaches into another component's internals (there's no
-deprecation policy protecting it), every step here is defensive: any
-failure is logged as a warning and swallowed. This feature is a
-convenience layer on top of the integration, never a dependency of it -
-zone control keeps working perfectly even if the dashboard step fails,
-or if a future Home Assistant version changes this internal shape.
+1. Reaching into the *live* `hass.data["lovelace"]` object for its
+   `dashboards_collection` - the same one Home Assistant Core itself uses
+   to auto-provision the built-in "Map" dashboard. This broke outright on
+   HA 2026.9.1: that attribute no longer exists on the live object at
+   all - `dashboards_collection` became a local variable inside
+   `lovelace`'s own `async_setup()`, with no hook left for anyone else to
+   reach it. Confirmed by reading that version's actual source.
+2. What this module does now: instantiate our *own*
+   `homeassistant.components.lovelace.dashboard.DashboardsCollection`
+   pointed at the exact same on-disk storage the live one uses (same
+   Store key/version, imported from that module rather than hardcoded, so
+   a future rename surfaces as an ImportError we catch, not a silent
+   wrong-file write). This reads/writes the dashboard registry directly,
+   independent of whatever shape the live in-memory object happens to
+   have this version.
 
-One such change already happened between HA versions: `hass.data["lovelace"]`
-used to be a plain dict (`lovelace_data["dashboards_collection"]`) and later
-became a typed object (`lovelace_data.dashboards_collection`). `_get_field`
-tries attribute access first, then dict-style, so this keeps working across
-both without needing to know which one a given HA version uses.
+Trade-off accepted for approach 2: a *brand-new* dashboard we create this
+way is on disk correctly, but won't appear in the sidebar until the next
+Home Assistant restart - the panel/sidebar registration itself only
+happens via the live collection's own listener during `lovelace`'s
+`async_setup()`, which already ran before our config entry loaded. Once
+the dashboard exists (after that first restart), updating its views
+(renames, new zones, IP reconfiguration) applies immediately, with no
+further restart - only the very first creation needs one.
+
+Because this still reaches into another component's internals (there is
+no deprecation policy protecting it, and it already changed shape once
+between HA versions), every step here stays defensive: any failure is
+logged as a warning and swallowed. This feature is a convenience layer on
+top of the integration, never a dependency of it - zone control keeps
+working perfectly even if the dashboard step fails, or if a future Home
+Assistant version changes this internal shape yet again.
 """
 
 from __future__ import annotations
@@ -31,6 +47,7 @@ from typing import Any
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import entity_registry as er
+from homeassistant.helpers.storage import Store
 
 from .const import CONF_INPUT_NAMES, CONF_ZONE_NAMES, DOMAIN
 from .device import AatMultiroomDevice
@@ -42,19 +59,6 @@ _LOGGER = logging.getLogger(__name__)
 DASHBOARD_URL_PATH = "aat-multiroom"
 DASHBOARD_TITLE = "AAT Multiroom"
 DASHBOARD_ICON = "mdi:speaker-multiple"
-
-
-def _get_field(container: Any, name: str) -> Any:
-    """Read `name` off `container` whether it's a plain dict (older HA) or
-    an attribute-based object (newer HA) - see the module docstring."""
-    if container is None:
-        return None
-    value = getattr(container, name, None)
-    if value is not None:
-        return value
-    if isinstance(container, dict):
-        return container.get(name)
-    return None
 
 
 async def async_ensure_dashboard(
@@ -79,30 +83,52 @@ async def async_ensure_dashboard(
 async def _async_ensure_dashboard(
     hass: HomeAssistant, entry: ConfigEntry, device: AatMultiroomDevice
 ) -> None:
-    lovelace_data = hass.data.get("lovelace")
-    if lovelace_data is None:
-        _LOGGER.debug("Lovelace isn't loaded; skipping the automatic dashboard")
+    try:
+        # Imported lazily (and from the exact module that owns these
+        # names) rather than at module load time: if a future Home
+        # Assistant version renames/removes this module, the failure
+        # surfaces here - inside our own try/except - instead of
+        # crashing integration setup.
+        from homeassistant.components.lovelace import dashboard as lovelace_dashboard
+    except ImportError:
+        _LOGGER.debug(
+            "Home Assistant's lovelace.dashboard module isn't importable; "
+            "skipping the automatic dashboard"
+        )
         return
 
-    dashboards_collection = _get_field(lovelace_data, "dashboards_collection")
-    dashboards = _get_field(lovelace_data, "dashboards")
-    if dashboards_collection is None or dashboards is None:
-        _LOGGER.debug("Unexpected Lovelace data shape; skipping the automatic dashboard")
-        return
+    # A fresh collection instance, unrelated to (and not synchronized
+    # with) whatever live one `lovelace`'s own async_setup() built - but
+    # pointed at the exact same on-disk storage (same Store key/version),
+    # so reading/writing through it is equivalent to what the live one
+    # would do.
+    dashboards = lovelace_dashboard.DashboardsCollection(hass)
+    await dashboards.async_load()
 
-    if DASHBOARD_URL_PATH not in dashboards:
-        await dashboards_collection.async_create_item(
+    existing_item = next(
+        (item for item in dashboards.async_items() if item.get("url_path") == DASHBOARD_URL_PATH),
+        None,
+    )
+    if existing_item is None:
+        existing_item = await dashboards.async_create_item(
             {
                 "icon": DASHBOARD_ICON,
                 "title": DASHBOARD_TITLE,
                 "url_path": DASHBOARD_URL_PATH,
             }
         )
+        _LOGGER.info(
+            "Created the automatic '%s' dashboard; it will appear in the "
+            "sidebar after the next Home Assistant restart",
+            DASHBOARD_TITLE,
+        )
 
-    store = dashboards.get(DASHBOARD_URL_PATH)
-    if store is None:
-        _LOGGER.debug("Dashboard store missing right after creation; skipping")
-        return
+    dashboard_id = existing_item["id"]
+    store: Store[dict[str, Any]] = Store(
+        hass,
+        lovelace_dashboard.CONFIG_STORAGE_VERSION,
+        lovelace_dashboard.CONFIG_STORAGE_KEY.format(dashboard_id),
+    )
 
     ent_reg = er.async_get(hass)
     view = _build_view(ent_reg.async_get_entity_id, entry, device)
@@ -110,7 +136,7 @@ async def _async_ensure_dashboard(
         _LOGGER.debug("No entities found yet for %s; skipping dashboard view", entry.title)
         return
 
-    current = await store.async_load(False)
+    current = await store.async_load()
     config: dict[str, Any] = current or {}
     views: list[dict[str, Any]] = config.setdefault("views", [])
 

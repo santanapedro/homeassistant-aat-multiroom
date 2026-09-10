@@ -2,16 +2,21 @@
 
 `_build_view` takes its entity lookup as an injected function precisely so
 it can be tested here without touching Home Assistant's real entity
-registry or Lovelace storage internals. `async_ensure_dashboard`'s
-orchestration (create the dashboard if missing, merge this entry's view
-into its stored views) is tested against small fakes standing in for
-`dashboards_collection`/the dashboard's own store - not the real Lovelace
-subsystem, which is exactly the point: this feature must degrade
-gracefully if that internal shape ever changes.
+registry or Lovelace storage internals.
+
+`async_ensure_dashboard`'s orchestration (create the dashboard if missing,
+merge this entry's view into its stored views) is tested against fakes
+standing in for Home Assistant's own `homeassistant.components.lovelace.
+dashboard.DashboardsCollection` class and `homeassistant.helpers.storage.
+Store` - not the real Lovelace subsystem, which is exactly the point:
+this feature must degrade gracefully if these internals ever change
+shape again (they already have once, live - see dashboard.py's module
+docstring for the full story).
 """
 
 from __future__ import annotations
 
+import sys
 from types import SimpleNamespace
 
 from custom_components.aat_multiroom.dashboard import (
@@ -117,56 +122,79 @@ def test_build_view_uses_generic_zone_and_input_names_as_fallback() -> None:
 
 
 # ---------------------------------------------------------------------
-# async_ensure_dashboard: orchestration, against fake Lovelace internals
+# async_ensure_dashboard: orchestration, against fakes for Home
+# Assistant's own DashboardsCollection class and Store helper.
 # ---------------------------------------------------------------------
 
 
 class FakeStore:
-    def __init__(self, initial: dict | None = None) -> None:
-        self._data = initial
-        self.saved: dict | None = None
+    """Stands in for homeassistant.helpers.storage.Store: one instance per
+    call, but all instances for the same key share the same backing dict
+    (attached to `hass`), exactly like the real Store persists to the
+    same file across separate instances pointed at the same key."""
 
-    async def async_load(self, force: bool) -> dict | None:
-        return self._data
+    def __init__(self, hass, version, key) -> None:
+        self.key = key
+        self._backing = hass.data.setdefault("_fake_store_backing", {})
+
+    async def async_load(self) -> dict | None:
+        return self._backing.get(self.key)
 
     async def async_save(self, config: dict) -> None:
-        self.saved = config
-        self._data = config
+        self._backing[self.key] = config
 
 
 class FakeDashboardsCollection:
-    def __init__(self, dashboards: dict) -> None:
-        self._dashboards = dashboards
+    """Stands in for homeassistant.components.lovelace.dashboard.
+    DashboardsCollection: a fresh instance per call (like the real one,
+    which our code deliberately builds anew each time - see dashboard.py's
+    module docstring), backed by a dict shared via `hass` so state
+    persists across separate instances like real storage would."""
+
+    def __init__(self, hass) -> None:
+        self._storage: list[dict] = hass.data.setdefault("_fake_dashboards_storage", [])
+        self._loaded: list[dict] = []
         self.created: list[dict] = []
 
-    async def async_create_item(self, data: dict) -> None:
-        self.created.append(data)
-        self._dashboards[data["url_path"]] = FakeStore()
+    async def async_load(self) -> None:
+        self._loaded = self._storage
+
+    def async_items(self) -> list[dict]:
+        return list(self._loaded)
+
+    async def async_create_item(self, data: dict) -> dict:
+        item = {"id": data["url_path"], **data}
+        self.created.append(dict(data))
+        self._storage.append(item)
+        self._loaded = self._storage
+        return item
 
 
-def make_lovelace_hass_data() -> tuple[SimpleNamespace, dict, FakeDashboardsCollection]:
-    dashboards: dict = {}
-    collection = FakeDashboardsCollection(dashboards)
-    hass = SimpleNamespace(data={"lovelace": {"dashboards_collection": collection, "dashboards": dashboards}})
-    return hass, dashboards, collection
+def make_hass() -> SimpleNamespace:
+    return SimpleNamespace(data={})
 
 
-def make_lovelace_hass_data_attribute_style() -> tuple[SimpleNamespace, dict, FakeDashboardsCollection]:
-    """Some Home Assistant versions store `hass.data["lovelace"]` as a
-    plain dict (`make_lovelace_hass_data` above); others as an
-    attribute-based object (e.g. a dataclass named `LovelaceData`) with
-    the exact same field names. This reproduces a real bug caught live:
-    `_get_field` must handle both without needing to know which one a
-    given HA version uses."""
-    dashboards: dict = {}
-    collection = FakeDashboardsCollection(dashboards)
-    lovelace_data = SimpleNamespace(dashboards_collection=collection, dashboards=dashboards)
-    hass = SimpleNamespace(data={"lovelace": lovelace_data})
-    return hass, dashboards, collection
+def patch_lovelace_internals(monkeypatch) -> None:
+    """Point our module's imports at the fakes above instead of Home
+    Assistant's real lovelace.dashboard module and storage.Store - both
+    imported by name, so patching the real modules' attributes is enough
+    even though our code imports them freshly on every call."""
+    monkeypatch.setattr(
+        "homeassistant.components.lovelace.dashboard.DashboardsCollection",
+        FakeDashboardsCollection,
+    )
+    monkeypatch.setattr(
+        "homeassistant.components.lovelace.dashboard.CONFIG_STORAGE_VERSION", 1
+    )
+    monkeypatch.setattr(
+        "homeassistant.components.lovelace.dashboard.CONFIG_STORAGE_KEY", "lovelace.{}"
+    )
+    monkeypatch.setattr("custom_components.aat_multiroom.dashboard.Store", FakeStore)
 
 
 async def test_ensure_dashboard_creates_dashboard_when_missing(monkeypatch) -> None:
-    hass, dashboards, collection = make_lovelace_hass_data()
+    hass = make_hass()
+    patch_lovelace_internals(monkeypatch)
     monkeypatch.setattr(
         "custom_components.aat_multiroom.dashboard.er.async_get",
         lambda hass: SimpleNamespace(async_get_entity_id=lambda *a: None),
@@ -178,40 +206,24 @@ async def test_ensure_dashboard_creates_dashboard_when_missing(monkeypatch) -> N
 
     await async_ensure_dashboard(hass, make_entry(), FakeDevice({1: ZoneState()}))
 
-    assert collection.created == [
+    assert hass.data["_fake_dashboards_storage"] == [
         {
+            "id": DASHBOARD_URL_PATH,
             "icon": "mdi:speaker-multiple",
             "title": "AAT Multiroom",
             "url_path": DASHBOARD_URL_PATH,
         }
     ]
-    store = dashboards[DASHBOARD_URL_PATH]
-    assert store.saved["views"][0]["path"] == "multiroom-entry1"
-
-
-async def test_ensure_dashboard_works_when_lovelace_data_is_attribute_based(monkeypatch) -> None:
-    """Regression test for a bug caught live: on some HA versions
-    hass.data["lovelace"] is an attribute-based object, not a dict."""
-    hass, dashboards, collection = make_lovelace_hass_data_attribute_style()
-    monkeypatch.setattr(
-        "custom_components.aat_multiroom.dashboard.er.async_get",
-        lambda hass: SimpleNamespace(async_get_entity_id=lambda *a: None),
-    )
-    monkeypatch.setattr(
-        "custom_components.aat_multiroom.dashboard._build_view",
-        lambda *a, **k: {"path": "multiroom-entry1", "title": "x", "cards": [{"type": "tile"}]},
-    )
-
-    await async_ensure_dashboard(hass, make_entry(), FakeDevice({1: ZoneState()}))
-
-    assert collection.created  # the dashboard got created despite the attribute-based container
-    store = dashboards[DASHBOARD_URL_PATH]
-    assert store.saved["views"][0]["path"] == "multiroom-entry1"
+    saved = hass.data["_fake_store_backing"][f"lovelace.{DASHBOARD_URL_PATH}"]
+    assert saved["views"][0]["path"] == "multiroom-entry1"
 
 
 async def test_ensure_dashboard_does_not_recreate_existing_dashboard(monkeypatch) -> None:
-    hass, dashboards, collection = make_lovelace_hass_data()
-    dashboards[DASHBOARD_URL_PATH] = FakeStore({"views": []})
+    hass = make_hass()
+    patch_lovelace_internals(monkeypatch)
+    hass.data["_fake_dashboards_storage"] = [
+        {"id": DASHBOARD_URL_PATH, "url_path": DASHBOARD_URL_PATH, "title": "AAT Multiroom"}
+    ]
     monkeypatch.setattr(
         "custom_components.aat_multiroom.dashboard.er.async_get",
         lambda hass: SimpleNamespace(async_get_entity_id=lambda *a: None),
@@ -223,14 +235,21 @@ async def test_ensure_dashboard_does_not_recreate_existing_dashboard(monkeypatch
 
     await async_ensure_dashboard(hass, make_entry(), FakeDevice({1: ZoneState()}))
 
-    assert collection.created == []  # already existed, must not create again
+    # Still just the one pre-existing entry - must not create a duplicate.
+    assert len(hass.data["_fake_dashboards_storage"]) == 1
 
 
 async def test_ensure_dashboard_updates_its_own_view_without_touching_others(monkeypatch) -> None:
-    hass, dashboards, _collection = make_lovelace_hass_data()
+    hass = make_hass()
+    patch_lovelace_internals(monkeypatch)
+    hass.data["_fake_dashboards_storage"] = [
+        {"id": DASHBOARD_URL_PATH, "url_path": DASHBOARD_URL_PATH, "title": "AAT Multiroom"}
+    ]
     other_view = {"path": "multiroom-other-entry", "title": "Other", "cards": []}
     old_view_for_this_entry = {"path": "multiroom-entry1", "title": "old title", "cards": []}
-    dashboards[DASHBOARD_URL_PATH] = FakeStore({"views": [other_view, old_view_for_this_entry]})
+    hass.data["_fake_store_backing"] = {
+        f"lovelace.{DASHBOARD_URL_PATH}": {"views": [other_view, old_view_for_this_entry]}
+    }
 
     monkeypatch.setattr(
         "custom_components.aat_multiroom.dashboard.er.async_get",
@@ -243,21 +262,51 @@ async def test_ensure_dashboard_updates_its_own_view_without_touching_others(mon
 
     await async_ensure_dashboard(hass, make_entry(), FakeDevice({1: ZoneState()}))
 
-    views = dashboards[DASHBOARD_URL_PATH].saved["views"]
+    views = hass.data["_fake_store_backing"][f"lovelace.{DASHBOARD_URL_PATH}"]["views"]
     assert len(views) == 2
     assert other_view in views  # untouched
     assert {"path": "multiroom-entry1", "title": "new title", "cards": []} in views
 
 
-async def test_ensure_dashboard_is_a_no_op_when_lovelace_not_loaded() -> None:
-    hass = SimpleNamespace(data={})  # no "lovelace" key at all
+async def test_ensure_dashboard_is_a_no_op_when_no_view_can_be_built(monkeypatch) -> None:
+    """No entities registered yet -> _build_view returns None -> nothing
+    gets written to the dashboard's own view storage. The shared "AAT
+    Multiroom" dashboard shell may still get created (empty, no views) so
+    it's ready the moment entities do show up - that's pre-existing
+    behavior, not something this case changes."""
+    hass = make_hass()
+    patch_lovelace_internals(monkeypatch)
+    monkeypatch.setattr(
+        "custom_components.aat_multiroom.dashboard.er.async_get",
+        lambda hass: SimpleNamespace(async_get_entity_id=lambda *a: None),
+    )
+    monkeypatch.setattr(
+        "custom_components.aat_multiroom.dashboard._build_view", lambda *a, **k: None
+    )
 
     # Must not raise.
     await async_ensure_dashboard(hass, make_entry(), FakeDevice({1: ZoneState()}))
 
+    # No view storage was actually written to.
+    assert hass.data.get("_fake_store_backing", {}) == {}
+
+
+async def test_ensure_dashboard_is_a_no_op_when_lovelace_dashboard_module_is_missing(
+    monkeypatch,
+) -> None:
+    """Regression-style coverage for the scenario that actually happened
+    live: a future/different Home Assistant version could remove or
+    relocate this module entirely. Simulated here by making the import
+    fail outright."""
+    monkeypatch.setitem(sys.modules, "homeassistant.components.lovelace.dashboard", None)
+
+    # Must not raise.
+    await async_ensure_dashboard(make_hass(), make_entry(), FakeDevice({1: ZoneState()}))
+
 
 async def test_ensure_dashboard_swallows_unexpected_errors(monkeypatch) -> None:
-    hass, _dashboards, _collection = make_lovelace_hass_data()
+    hass = make_hass()
+    patch_lovelace_internals(monkeypatch)
 
     def _boom(*args, **kwargs):
         raise RuntimeError("Lovelace internals changed shape on some future HA version")

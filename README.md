@@ -130,6 +130,23 @@ allowed`), e derrubou a criação de toda entidade `media_player`/
 (`via_device_id` quando o id do hub já é conhecido, `via_device` como
 fallback) — nunca os dois juntos (`entity.py`, `test_entity.py`).
 
+Um terceiro problema, esse mudando a abordagem inteira: numa versão
+ainda mais nova do Home Assistant, `hass.data["lovelace"]` simplesmente
+parou de expor `dashboards_collection` — virou uma variável só interna
+da própria função de setup do Lovelace, sem nenhum jeito de alcançá-la
+em memória de fora. A correção trocou de estratégia: em vez de pegar o
+objeto vivo, a integração agora instancia sua própria cópia da classe
+`DashboardsCollection` do Home Assistant, apontada pro mesmo arquivo de
+armazenamento em disco (mesma chave/versão de `Store`, importadas do
+próprio módulo do Home Assistant em vez de fixadas no código, então uma
+futura renomeação vira um `ImportError` capturado, não uma escrita no
+arquivo errado). A troca: um dashboard novo criado assim só aparece na
+barra lateral depois de um reinício do Home Assistant (o registro do
+painel na barra lateral só acontece durante o setup do próprio
+`lovelace`, que já rodou antes da nossa integração) — só a primeira
+criação precisa desse reinício; atualizações de zonas/entradas depois
+disso aplicam na hora.
+
 ## Múltiplos multirooms
 
 Repita o processo de adicionar integração para cada amplificador AAT que
