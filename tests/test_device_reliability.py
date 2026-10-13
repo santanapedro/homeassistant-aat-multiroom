@@ -223,6 +223,7 @@ async def test_async_close_awaits_cancelled_background_tasks() -> None:
 async def server():
     srv = FakeAatServer()
     srv.script["GETALL"] = "GETALL PMR4 V1.13 ON 5000 0 1 30 OFF 14 14 20 7"
+    srv.script["VOLLIMIT"] = "VOLLIMIT 1 87"
     srv.script["ZSTDBYGET"] = "ZSTDBYGET 1 ON"
     await srv.start()
     yield srv

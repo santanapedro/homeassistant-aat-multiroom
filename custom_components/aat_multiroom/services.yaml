@@ -1,0 +1,43 @@
+group_command:
+  fields:
+    action:
+      required: true
+      example: volume
+      selector:
+        select:
+          options:
+            - value: power_on
+              label: Ligar o grupo
+            - value: power_off
+              label: Desligar o grupo
+            - value: mute_on
+              label: Mutar o grupo
+            - value: mute_off
+              label: Desmutar o grupo
+            - value: volume
+              label: Definir o volume do grupo
+            - value: input
+              label: Selecionar a entrada do grupo
+            - value: party_on
+              label: Modo festa - indicar ativo
+            - value: party_off
+              label: Modo festa - indicar inativo
+    group:
+      default: 0
+      example: 0
+      selector:
+        number:
+          min: 0
+          max: 32
+          mode: box
+    value:
+      example: 20
+      selector:
+        number:
+          min: 0
+          max: 87
+          mode: box
+    config_entry_id:
+      selector:
+        config_entry:
+          integration: aat_multiroom

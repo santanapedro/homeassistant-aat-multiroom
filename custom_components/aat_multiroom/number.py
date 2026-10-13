@@ -33,12 +33,14 @@ from .const import (
     BALANCE_MAX,
     CONF_ZONE_NAMES,
     DOMAIN,
+    MAX_VOLUME,
     PREAMP_MAX,
     TONE_FLAT,
     TONE_MAX,
+    VOLUME_LIMIT_MIN,
 )
 from .device import AatMultiroomDevice
-from .entity import zone_device_info
+from .entity import hub_device_info, zone_device_info
 
 
 @dataclass(frozen=True)
@@ -89,11 +91,16 @@ async def async_setup_entry(
     hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddEntitiesCallback
 ) -> None:
     device: AatMultiroomDevice = hass.data[DOMAIN][entry.entry_id]
-    async_add_entities(
-        AatAudioNumber(device, entry, zone_num, control)
-        for zone_num in sorted(device.zones)
-        for control in AUDIO_CONTROLS
-    )
+    entities: list[NumberEntity] = [AatAllZonesVolumeNumber(device, entry)]
+    for zone_num in sorted(device.zones):
+        entities.extend(
+            AatAudioNumber(device, entry, zone_num, control) for control in AUDIO_CONTROLS
+        )
+        # VOLLIMIT needs firmware >= 3.08; units that answered "unknown
+        # command" to it simply don't get the slider.
+        if device.vollimit_supported is not False:
+            entities.append(AatVolumeLimitNumber(device, entry, zone_num))
+    async_add_entities(entities)
 
 
 class AatAudioNumber(NumberEntity):
@@ -149,3 +156,101 @@ class AatAudioNumber(NumberEntity):
     async def async_set_native_value(self, value: float) -> None:
         setter = getattr(self._device, self._control.setter)
         await setter(self._zone_num, self._control.to_raw(value))
+
+
+class AatVolumeLimitNumber(NumberEntity):
+    """Per-zone volume ceiling (VOLLIMIT, firmware >= 3.08).
+
+    44..87, where 87 means "no limit". Protects speakers from a runaway
+    volume setting - the device enforces it, including against changes
+    made from the AAT app."""
+
+    _attr_has_entity_name = True
+    _attr_should_poll = False
+    _attr_mode = NumberMode.SLIDER
+    _attr_entity_category = EntityCategory.CONFIG
+    _attr_icon = "mdi:volume-lock"
+    _attr_name = "Limite de volume"
+    _attr_native_min_value = float(VOLUME_LIMIT_MIN)
+    _attr_native_max_value = float(MAX_VOLUME)
+    _attr_native_step = 1.0
+
+    def __init__(self, device: AatMultiroomDevice, entry: ConfigEntry, zone_num: int) -> None:
+        self._device = device
+        self._zone_num = zone_num
+        zone_name = entry.options.get(CONF_ZONE_NAMES, {}).get(str(zone_num), f"Zona {zone_num}")
+        self._attr_unique_id = f"{entry.entry_id}_zone_{zone_num}_volume_limit"
+        self._attr_device_info = zone_device_info(device, entry, zone_num, zone_name)
+
+    async def async_added_to_hass(self) -> None:
+        self.async_on_remove(
+            async_dispatcher_connect(
+                self.hass, self._device.zone_signal(self._zone_num), self._handle_update
+            )
+        )
+
+    @callback
+    def _handle_update(self) -> None:
+        self.async_write_ha_state()
+
+    @property
+    def available(self) -> bool:
+        return self._device.connected
+
+    @property
+    def native_value(self) -> float | None:
+        zone = self._device.zones.get(self._zone_num)
+        return None if zone is None else float(zone.volume_limit)
+
+    async def async_set_native_value(self, value: float) -> None:
+        await self._device.async_set_volume_limit(self._zone_num, int(round(value)))
+
+
+class AatAllZonesVolumeNumber(NumberEntity):
+    """One slider for the volume of every zone of this multiroom at once.
+
+    Shows the average of the zones' current volumes; setting it applies the
+    same volume to all of them (one VOLSET per zone, so a zone's own
+    volume limit still applies to it)."""
+
+    _attr_has_entity_name = True
+    _attr_should_poll = False
+    _attr_mode = NumberMode.SLIDER
+    _attr_icon = "mdi:volume-high"
+    _attr_name = "Volume geral"
+    _attr_native_min_value = 0.0
+    _attr_native_max_value = float(MAX_VOLUME)
+    _attr_native_step = 1.0
+
+    def __init__(self, device: AatMultiroomDevice, entry: ConfigEntry) -> None:
+        self._device = device
+        self._attr_unique_id = f"{entry.entry_id}_all_volume"
+        self._attr_device_info = hub_device_info(device, entry)
+
+    async def async_added_to_hass(self) -> None:
+        # The average moves whenever any zone's volume does.
+        signals = [self._device.signal] + [
+            self._device.zone_signal(zone) for zone in sorted(self._device.zones)
+        ]
+        for signal in signals:
+            self.async_on_remove(
+                async_dispatcher_connect(self.hass, signal, self._handle_update)
+            )
+
+    @callback
+    def _handle_update(self) -> None:
+        self.async_write_ha_state()
+
+    @property
+    def available(self) -> bool:
+        return self._device.connected
+
+    @property
+    def native_value(self) -> float | None:
+        volumes = [zone.volume for zone in self._device.zones.values()]
+        if not volumes:
+            return None
+        return float(round(sum(volumes) / len(volumes)))
+
+    async def async_set_native_value(self, value: float) -> None:
+        await self._device.async_set_all_volume(int(round(value)))

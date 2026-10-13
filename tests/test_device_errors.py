@@ -50,6 +50,7 @@ async def server():
     # So the background resync triggered on failure has something sane to
     # parse instead of erroring a second time.
     srv.script["GETALL"] = "GETALL PMR4 V1.13 ON 5000 0 1 30 OFF 14 14 20 7"
+    srv.script["VOLLIMIT"] = "VOLLIMIT 1 87"
     # Deliberately different from what the optimistic update below would
     # guess, so the resync test can tell "resync happened" apart from
     # "the optimistic guess just happened to match".

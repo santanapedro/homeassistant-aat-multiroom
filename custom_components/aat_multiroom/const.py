@@ -20,6 +20,29 @@ BALANCE_MAX = 20
 BALANCE_CENTER = 10
 PREAMP_MAX = 7
 
+# VOLLIMIT (manual 1.20.1.2, firmware >= 3.08): per-zone volume ceiling.
+# 44..87, where 87 means "no limit".
+VOLUME_LIMIT_MIN = 44
+
+# Group / party commands (manual 1.20.2, firmware >= 3.08) are UDP
+# broadcasts to this fixed port and are never answered. Group 0 is party
+# mode; 1..32 are user-defined groups.
+GROUP_UDP_PORT = 5000
+GROUP_MAX = 32
+
+# Zone output mode, set with SWSTEREO / SWMONO / SWBRIDGE. Write-only on the
+# device (no GET, and not part of GETALL).
+OUTPUT_MODES: dict[str, str] = {
+    "stereo": "SWSTEREO",
+    "mono": "SWMONO",
+    "bridge": "SWBRIDGE",
+}
+
+# Models with no mono/stereo/bridge hardware: the PMRH 2/4/6 and the
+# non-amplified PMA 1/2 (manual 1.10.1.1) - commands are accepted and do
+# nothing there.
+MODELS_WITHOUT_OUTPUT_MODE_PREFIXES = ("PMRH", "PMA")
+
 # How often we re-sync the full state as a safety net, on top of the
 # push-based updates that arrive as soon as anything changes.
 REFRESH_INTERVAL = 30

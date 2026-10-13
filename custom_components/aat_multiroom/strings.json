@@ -60,6 +60,33 @@
     },
     "connection_error": {
       "message": "Falha de comunicação com o Multiroom ao executar \"{command}\": {error}"
+    },
+    "no_multiroom_loaded": "Nenhum Multiroom AAT está carregado para enviar o comando de grupo.",
+    "unknown_config_entry": "O Multiroom informado não está carregado.",
+    "invalid_group_command": "Comando de grupo inválido: {error}"
+  },
+  "services": {
+    "group_command": {
+      "name": "Comando de grupo / modo festa",
+      "description": "Envia um comando de grupo por broadcast UDP (firmware 3.08 ou superior). Atenção: atinge TODOS os Multirooms AAT da rede que pertençam ao grupo, sem resposta nem confirmação. Grupo 0 é o modo festa.",
+      "fields": {
+        "action": {
+          "name": "Ação",
+          "description": "O que enviar ao grupo."
+        },
+        "group": {
+          "name": "Grupo",
+          "description": "Número do grupo (1 a 32) ou 0 para o modo festa. Ignorado nas ações de modo festa."
+        },
+        "value": {
+          "name": "Valor",
+          "description": "Volume (0 a 87) ou número da entrada (1 a 8). Necessário só para as ações de volume e de entrada."
+        },
+        "config_entry_id": {
+          "name": "Multiroom",
+          "description": "Qual Multiroom usa para descobrir a rede onde enviar. Opcional; por padrão, o primeiro carregado."
+        }
+      }
     }
   }
 }

@@ -60,6 +60,33 @@
     },
     "connection_error": {
       "message": "Communication with the Multiroom failed while running \"{command}\": {error}"
+    },
+    "no_multiroom_loaded": "No AAT Multiroom is loaded to send the group command through.",
+    "unknown_config_entry": "The given Multiroom is not loaded.",
+    "invalid_group_command": "Invalid group command: {error}"
+  },
+  "services": {
+    "group_command": {
+      "name": "Group / party-mode command",
+      "description": "Sends a group command as a UDP broadcast (firmware 3.08 or newer). Note: it reaches EVERY AAT Multiroom on the network that belongs to the group, with no reply or confirmation. Group 0 is party mode.",
+      "fields": {
+        "action": {
+          "name": "Action",
+          "description": "What to send to the group."
+        },
+        "group": {
+          "name": "Group",
+          "description": "Group number (1 to 32), or 0 for party mode. Ignored by the party actions."
+        },
+        "value": {
+          "name": "Value",
+          "description": "Volume (0 to 87) or input number (1 to 8). Only needed by the volume and input actions."
+        },
+        "config_entry_id": {
+          "name": "Multiroom",
+          "description": "Which Multiroom to use to find the network to broadcast on. Optional; defaults to the first loaded one."
+        }
+      }
     }
   }
 }

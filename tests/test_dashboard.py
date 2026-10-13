@@ -125,6 +125,62 @@ def test_build_view_adds_a_collapsible_audio_section_per_zone() -> None:
     assert [r["name"] for r in rows] == ["Graves", "Agudos", "Balanço", "Ganho pré-amp"]
 
 
+def test_build_view_includes_the_volume_limit_slider_in_the_audio_section() -> None:
+    registered = _audio_registry()
+    registered[("number", "aat_multiroom", "entry1_zone_1_volume_limit")] = "number.sala_limite"
+    view = _build_view(
+        lambda d, p, u: registered.get((d, p, u)), make_entry(), FakeDevice({1: ZoneState()})
+    )
+
+    assert view is not None
+    conditional = next(c for c in view["cards"][0]["cards"] if c["type"] == "conditional")
+    rows = conditional["card"]["entities"]
+    assert rows[-1] == {"entity": "number.sala_limite", "name": "Limite de volume"}
+
+
+def test_build_view_has_a_general_block_for_unit_wide_controls() -> None:
+    registered = {
+        ("switch", "aat_multiroom", "entry1_master_power"): "switch.master",
+        ("number", "aat_multiroom", "entry1_all_volume"): "number.volume_geral",
+        ("button", "aat_multiroom", "entry1_mute_all"): "button.mutar",
+        ("button", "aat_multiroom", "entry1_unmute_all"): "button.desmutar",
+        ("button", "aat_multiroom", "entry1_standby_all"): "button.standby",
+        ("button", "aat_multiroom", "entry1_turn_on_all"): "button.ligar",
+        ("button", "aat_multiroom", "entry1_all_input_1"): "button.todas_tv",
+        ("button", "aat_multiroom", "entry1_all_input_2"): "button.todas_spotify",
+    }
+    view = _build_view(
+        lambda d, p, u: registered.get((d, p, u)), make_entry(), FakeDevice({})
+    )
+
+    assert view is not None
+    general = next(c for c in view["cards"] if c["type"] == "entities")
+    assert general["title"] == "Todas as zonas"
+    slider, actions, inputs = general["entities"]
+    assert slider == {"entity": "number.volume_geral", "name": "Volume geral"}
+    assert [b["entity"] for b in actions["entities"]] == [
+        "button.mutar",
+        "button.desmutar",
+        "button.standby",
+        "button.ligar",
+    ]
+    # Input buttons use the configured input names, not "Todas as zonas -> X".
+    assert inputs["entities"] == [
+        {"entity": "button.todas_tv", "name": "TV"},
+        {"entity": "button.todas_spotify", "name": "Spotify"},
+    ]
+
+
+def test_build_view_omits_the_general_block_when_none_of_it_exists() -> None:
+    registered = {("switch", "aat_multiroom", "entry1_master_power"): "switch.master"}
+    view = _build_view(
+        lambda d, p, u: registered.get((d, p, u)), make_entry(), FakeDevice({})
+    )
+
+    assert view is not None
+    assert all(c["type"] != "entities" for c in view["cards"])
+
+
 def test_build_view_has_no_audio_section_without_its_switch_or_sliders() -> None:
     registered = _audio_registry()
 

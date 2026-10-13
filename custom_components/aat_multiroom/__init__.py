@@ -10,25 +10,83 @@ from __future__ import annotations
 
 import logging
 
+import voluptuous as vol
+
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
-from homeassistant.core import HomeAssistant
-from homeassistant.exceptions import ConfigEntryNotReady
+from homeassistant.core import HomeAssistant, ServiceCall
+from homeassistant.exceptions import ConfigEntryNotReady, ServiceValidationError
+from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers import device_registry as dr
+from homeassistant.helpers.typing import ConfigType
 
 from .api import AatConnectionError
-from .const import DOMAIN
+from .const import DOMAIN, GROUP_MAX, MAX_VOLUME
 from .dashboard import async_ensure_dashboard
 from .device import AatMultiroomDevice
+from .group import ALL_ACTIONS, async_send_group_command
 
 _LOGGER = logging.getLogger(__name__)
 
 PLATFORMS: list[Platform] = [
+    Platform.BUTTON,
     Platform.MEDIA_PLAYER,
     Platform.NUMBER,
+    Platform.SELECT,
     Platform.SENSOR,
     Platform.SWITCH,
 ]
+
+CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
+
+SERVICE_GROUP_COMMAND = "group_command"
+GROUP_COMMAND_SCHEMA = vol.Schema(
+    {
+        vol.Required("action"): vol.In(ALL_ACTIONS),
+        vol.Optional("group", default=0): vol.All(vol.Coerce(int), vol.Range(0, GROUP_MAX)),
+        vol.Optional("value"): vol.All(vol.Coerce(int), vol.Range(0, MAX_VOLUME)),
+        vol.Optional("config_entry_id"): cv.string,
+    }
+)
+
+
+async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
+    """Register the integration-wide services (once, not per config entry)."""
+
+    async def _handle_group_command(call: ServiceCall) -> None:
+        devices: dict[str, AatMultiroomDevice] = hass.data.get(DOMAIN, {})
+        entry_id = call.data.get("config_entry_id")
+        if entry_id is not None:
+            device = devices.get(entry_id)
+            if device is None:
+                raise ServiceValidationError(
+                    translation_domain=DOMAIN, translation_key="unknown_config_entry"
+                )
+        else:
+            device = next(iter(devices.values()), None)
+            if device is None:
+                raise ServiceValidationError(
+                    translation_domain=DOMAIN, translation_key="no_multiroom_loaded"
+                )
+        try:
+            await async_send_group_command(
+                hass,
+                device.host,
+                call.data["action"],
+                call.data["group"],
+                call.data.get("value"),
+            )
+        except ValueError as err:
+            raise ServiceValidationError(
+                translation_domain=DOMAIN,
+                translation_key="invalid_group_command",
+                translation_placeholders={"error": str(err)},
+            ) from err
+
+    hass.services.async_register(
+        DOMAIN, SERVICE_GROUP_COMMAND, _handle_group_command, schema=GROUP_COMMAND_SCHEMA
+    )
+    return True
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:

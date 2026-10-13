@@ -80,6 +80,17 @@ AUDIO_SLIDER_NAMES: tuple[tuple[str, str], ...] = (
     ("treble", "Agudos"),
     ("balance", "Balanço"),
     ("preamp", "Ganho pré-amp"),
+    # Only exists on firmware >= 3.08; absent entities are simply skipped.
+    ("volume_limit", "Limite de volume"),
+)
+
+# (unique_id suffix, label, icon) of the unit-wide action buttons shown in
+# the "Todas as zonas" block - same keys as button.HUB_ACTIONS.
+GENERAL_ACTIONS: tuple[tuple[str, str, str], ...] = (
+    ("mute_all", "Mutar", "mdi:volume-off"),
+    ("unmute_all", "Desmutar", "mdi:volume-high"),
+    ("standby_all", "Standby", "mdi:speaker-off"),
+    ("turn_on_all", "Ligar", "mdi:speaker"),
 )
 
 
@@ -198,6 +209,29 @@ def _build_view(
     master_power = entity_id("switch", f"{entry.entry_id}_master_power")
     if master_power:
         cards.append({"type": "tile", "entity": master_power, "name": "Power geral"})
+
+    # Unit-wide controls: one volume slider for every zone, mute/standby
+    # buttons, and "all zones -> <input>" buttons.
+    general_rows: list[dict[str, Any]] = []
+    all_volume = entity_id("number", f"{entry.entry_id}_all_volume")
+    if all_volume:
+        general_rows.append({"entity": all_volume, "name": "Volume geral"})
+    action_buttons = [
+        {"entity": button_id, "name": label, "icon": icon}
+        for key, label, icon in GENERAL_ACTIONS
+        if (button_id := entity_id("button", f"{entry.entry_id}_{key}"))
+    ]
+    if action_buttons:
+        general_rows.append({"type": "buttons", "entities": action_buttons})
+    all_input_buttons = [
+        {"entity": button_id, "name": input_names.get(str(n), f"Entrada {n}")}
+        for n in input_numbers
+        if (button_id := entity_id("button", f"{entry.entry_id}_all_input_{n}"))
+    ]
+    if all_input_buttons:
+        general_rows.append({"type": "buttons", "entities": all_input_buttons})
+    if general_rows:
+        cards.append({"type": "entities", "title": "Todas as zonas", "entities": general_rows})
 
     for zone_num in sorted(device.zones):
         zone_name = zone_names.get(str(zone_num), f"Zona {zone_num}")

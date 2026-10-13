@@ -39,10 +39,12 @@ from .const import (
     DOMAIN,
     ERROR_CODE_TRANSLATION_KEYS,
     MAX_VOLUME,
+    OUTPUT_MODES,
     PREAMP_MAX,
     REFRESH_INTERVAL,
     TONE_FLAT,
     TONE_MAX,
+    VOLUME_LIMIT_MIN,
 )
 from homeassistant.const import CONF_HOST, CONF_PORT
 
@@ -67,6 +69,8 @@ class ZoneState:
     treble: int = TONE_FLAT
     balance: int = BALANCE_CENTER
     preamp: int = 0
+    # VOLLIMIT ceiling (firmware >= 3.08); MAX_VOLUME means "no limit".
+    volume_limit: int = MAX_VOLUME
 
 
 def _adjust_handler(attr: str) -> Callable[["AatMultiroomDevice", list[str]], int]:
@@ -98,6 +102,15 @@ class AatMultiroomDevice:
         # any entity is constructed - lets zone entities put via_device_id
         # in their DeviceInfo alongside the older via_device tuple.
         self.hub_device_id: str | None = None
+        # From GETALL (manual 1.13.1): firmware version, the second
+        # (configurable) TCP port, and the connection timeout in seconds
+        # (0 = disabled).
+        self.firmware: str | None = None
+        self.tcp_port2: int | None = None
+        self.tcp_timeout: int | None = None
+        # None = not probed yet; False = firmware doesn't know VOLLIMIT
+        # (answered "unknown command"), so don't ask again.
+        self.vollimit_supported: bool | None = None
 
         self.client = AatMultiroomClient(self.host, self.port)
         self.client.add_listener(self._on_message)
@@ -165,9 +178,20 @@ class AatMultiroomDevice:
             await asyncio.gather(*tasks, return_exceptions=True)
         await self.client.async_disconnect()
 
+    def _refresh_interval(self) -> float:
+        """Seconds between safety-net resyncs.
+
+        If the device has a TCP timeout configured (manual 1.18), keep our
+        own traffic comfortably inside it so an idle-looking connection is
+        never the thing that gets reset."""
+        timeout = self.tcp_timeout
+        if timeout and timeout > 0 and timeout < 2 * REFRESH_INTERVAL:
+            return max(5.0, timeout / 2)
+        return float(REFRESH_INTERVAL)
+
     async def _periodic_refresh(self) -> None:
         while not self._closing:
-            await asyncio.sleep(REFRESH_INTERVAL)
+            await asyncio.sleep(self._refresh_interval())
             if not self.client.connected:
                 continue
             try:
@@ -262,13 +286,41 @@ class AatMultiroomDevice:
                     self.zones[zone_num].standby = zargs[1].upper() == "ON"
             except AatConnectionError:
                 break
+        await self._probe_volume_limits()
         self._notify_all()
+
+    async def _probe_volume_limits(self) -> None:
+        """Read each zone's VOLLIMIT, which GETALL doesn't carry.
+
+        Firmware older than 3.08 answers "unknown command" (error 7); that
+        is remembered so those units aren't asked again every refresh. The
+        values themselves land through the normal reply handlers."""
+        if self.vollimit_supported is False:
+            return
+        for zone_num in list(self.zones):
+            try:
+                await self.client.async_send_command("VOLLIMIT", zone_num)
+            except AatCommandError as err:
+                if err.code == "7":
+                    self.vollimit_supported = False
+                    return
+                _LOGGER.debug("VOLLIMIT %s rejected by %s: code %s", zone_num, self.host, err.code)
+            except AatConnectionError:
+                return
+            else:
+                self.vollimit_supported = True
 
     def _parse_getall(self, args: list[str]) -> None:
         if len(args) < 5:
             return
         self.model = args[0]
+        self.firmware = args[1]
         self.power = args[2].upper() == "ON"
+        for index, attr in ((3, "tcp_port2"), (4, "tcp_timeout")):
+            try:
+                setattr(self, attr, int(args[index]))
+            except ValueError:
+                continue
         zone_data = args[5:]
         zone_count = len(zone_data) // 7
         for i in range(zone_count):
@@ -366,6 +418,7 @@ class AatMultiroomDevice:
     _h_treble = _adjust_handler("treble")
     _h_balance = _adjust_handler("balance")
     _h_preamp = _adjust_handler("preamp")
+    _h_vollimit = _adjust_handler("volume_limit")
 
     def _h_pwron(self, args: list[str]) -> None:
         self.power = True
@@ -414,6 +467,13 @@ class AatMultiroomDevice:
         "PREAMP-": _h_preamp,
         "PREAMPGET": _h_preamp,
         "PREAMPSET": _h_preamp,
+        "VOLLIMIT": _h_vollimit,
+        # The VOLX* family (firmware >= 3.08) answers `<zone> <volume> <flag>`
+        # - same leading fields as VOL*, plus a "limit reached" flag.
+        "VOLX+": _h_volchange,
+        "VOLX-": _h_volchange,
+        "VOLGETX": _h_volchange,
+        "VOLSETX": _h_volchange,
         "PWRON": _h_pwron,
         "PWROFF": _h_pwroff,
         "PWRTOG": _h_pwrtog,
@@ -430,9 +490,12 @@ class AatMultiroomDevice:
         cmd: str,
         *args: object,
         zone: int | None = None,
+        all_zones: bool = False,
     ) -> None:
         apply_optimistic()
-        if zone is None:
+        if all_zones:
+            self._notify_all()
+        elif zone is None:
             self._notify()
         else:
             self._notify_zone(zone)
@@ -498,9 +561,9 @@ class AatMultiroomDevice:
         await self._run_command(_apply, "INPSET", zone, input_num, zone=zone)
 
     async def _async_set_adjust(
-        self, zone: int, attr: str, command: str, value: int, maximum: int
+        self, zone: int, attr: str, command: str, value: int, maximum: int, minimum: int = 0
     ) -> None:
-        value = max(0, min(maximum, int(value)))
+        value = max(minimum, min(maximum, int(value)))
 
         def _apply() -> None:
             setattr(self._get_zone(zone), attr, value)
@@ -518,6 +581,60 @@ class AatMultiroomDevice:
 
     async def async_set_preamp(self, zone: int, value: int) -> None:
         await self._async_set_adjust(zone, "preamp", "PREAMPSET", value, PREAMP_MAX)
+
+    async def async_set_volume_limit(self, zone: int, value: int) -> None:
+        await self._async_set_adjust(
+            zone, "volume_limit", "VOLLIMIT", value, MAX_VOLUME, minimum=VOLUME_LIMIT_MIN
+        )
+
+    # ------------------------------------------------------------------
+    # whole-unit commands (every zone of this amplifier at once)
+    # ------------------------------------------------------------------
+
+    async def _async_all_zones(self, command: str, attr: str, value: bool) -> None:
+        def _apply() -> None:
+            for zone_state in self.zones.values():
+                setattr(zone_state, attr, value)
+
+        await self._run_command(_apply, command, all_zones=True)
+
+    async def async_mute_all(self) -> None:
+        await self._async_all_zones("MUTEALL", "mute", True)
+
+    async def async_unmute_all(self) -> None:
+        await self._async_all_zones("UNMUTEALL", "mute", False)
+
+    async def async_standby_all(self) -> None:
+        await self._async_all_zones("ZSTDBYALL", "standby", True)
+
+    async def async_turn_on_all(self) -> None:
+        await self._async_all_zones("ZTONALL", "standby", False)
+
+    async def async_set_all_volume(self, volume: int) -> None:
+        """Same volume on every zone - one VOLSET per zone, so each zone's
+        own reply (and any VOLLIMIT clamp) is reflected individually."""
+        for zone in sorted(self.zones):
+            await self.async_set_volume(zone, volume)
+
+    async def async_select_input_all(self, input_num: int) -> None:
+        for zone in sorted(self.zones):
+            await self.async_select_input(zone, input_num)
+
+    async def async_set_output_mode(self, zone: int, mode: str) -> None:
+        """SWSTEREO / SWMONO / SWBRIDGE. Write-only on the device: there is
+        no command to read the mode back, so nothing local to update."""
+        await self._run_command(lambda: None, OUTPUT_MODES[mode], zone, zone=zone)
+
+    async def async_reset(self) -> None:
+        """Reboot the multiroom over the network (RESET, manual 1.17).
+
+        The connection dropping is the expected outcome here, not an error:
+        the usual reconnect loop picks the unit back up once it's booted."""
+        try:
+            await self._run_command(lambda: None, "RESET")
+        except HomeAssistantError as err:
+            if err.translation_key != "connection_error":
+                raise
 
     async def async_master_power(self, on: bool) -> None:
         def _apply() -> None:

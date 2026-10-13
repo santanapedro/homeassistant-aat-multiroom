@@ -16,10 +16,11 @@ branco e recorta/redimensiona conforme as especificações de imagem do HA.
 
 ## Escopo desta versão
 
-Só controle das **zonas do amplificador** — sem streamer embutido (PMR-9 a
-PMR-13) e sem modo festa/grupos. Inclui os ajustes de áudio por zona
-(graves, agudos, balanço e ganho de pré-amp); a API da AAT não tem
-controle de médios.
+Controle do **amplificador e das suas zonas** — sem o streamer embutido
+(PMR-9 a PMR-13), que usa uma API HTTP separada. Inclui os ajustes de áudio
+por zona (graves, agudos, balanço e ganho de pré-amp), limite de volume,
+ações para o aparelho inteiro, modo de saída e comandos de grupo/modo
+festa. A API da AAT não tem controle de médios.
 
 Por multiroom (dispositivo "hub"):
 
@@ -74,6 +75,77 @@ Por zona (cada zona é um dispositivo próprio dentro do multiroom):
   Os modelos PMRH 2/4/6 não têm ajuste de balanço (manual, seção 1.8.1.1):
   o aparelho aceita o comando mas não faz nada e sempre responde "centro",
   então nesses modelos o slider de balanço não tem efeito.
+
+### Aparelho inteiro (todas as zonas de um multiroom)
+
+Tudo isso age só no multiroom ao qual pertence, pela conexão TCP dele —
+nunca afeta outro aparelho da rede.
+
+- **Botões:** mutar todas, desmutar todas, todas em standby, ligar todas
+  (`MUTEALL`/`UNMUTEALL`/`ZSTDBYALL`/`ZTONALL`). Desmutar pode ser recusado
+  se houver mute de hardware ativo (manual 1.6.7).
+- **"Todas as zonas → entrada":** um botão por entrada configurada, que põe
+  todas as zonas naquela entrada.
+- **Volume geral:** um slider que mostra a média dos volumes e, ao mexer,
+  aplica o mesmo volume em todas as zonas (um `VOLSET` por zona, então o
+  limite de volume de cada zona continua valendo).
+- **Reiniciar multiroom** (`RESET`): **desativado por padrão**, porque um
+  clique acidental derruba o áudio de todas as zonas durante o boot. A
+  reconexão é automática depois.
+- **Diagnóstico:** sensores de firmware, porta TCP secundária e timeout de
+  conexão (já vêm no `GETALL`). Se o aparelho tiver um timeout curto
+  configurado, a sincronização periódica se ajusta para ficar dentro dele.
+
+### Limite de volume por zona
+
+Um slider por zona (`VOLLIMIT`, 44 a 87; 87 = sem limite) que protege as
+caixas de um volume excessivo — o próprio aparelho aplica o limite, inclusive
+contra mudanças feitas pelo app da AAT. Exige firmware ≥ 3.08: em firmware
+mais antigo o aparelho responde "comando desconhecido", isso é lembrado, e o
+slider simplesmente não é criado.
+
+### Modo de saída: estéreo / mono / bridge
+
+Um seletor por zona (`SWSTEREO`/`SWMONO`/`SWBRIDGE`). Cuidados:
+
+- **Estado presumido.** O aparelho não tem comando para ler o modo de volta,
+  então o seletor mostra a última escolha feita pelo Home Assistant (e não
+  reflete mudanças feitas no menu do instalador ou no app).
+- **Bridge dobra a potência de um canal** — escolhê-lo numa zona cujas
+  caixas estão ligadas em estéreo é um erro de hardware, não estético.
+- **Desativado por padrão**, e não é criado nos modelos sem esse hardware
+  (PMRH 2/4/6 e PMA 1/2 aceitam o comando e não fazem nada).
+
+### Grupos e modo festa (broadcast UDP)
+
+Disponível em firmware ≥ 3.08 pelo serviço **`aat_multiroom.group_command`**
+(ações: ligar/desligar/mutar/desmutar o grupo, volume, entrada, e o
+indicador de modo festa) e pelo switch **"Modo festa"** (desativado por
+padrão). O grupo `0` é o modo festa; `1` a `32` são grupos definidos no
+aparelho/app.
+
+Estes comandos são fundamentalmente diferentes de todo o resto:
+
+- Vão por **broadcast UDP** (porta 5000), **sem resposta** — não há como
+  confirmar a entrega nem ler o estado resultante. Depois de enviar, a
+  integração relê o estado de todos os multirooms carregados.
+- Atingem **todos** os multirooms AAT da rede que pertençam ao grupo, não só
+  o aparelho usado para enviar. Isso é o ponto de um grupo, mas quebra o
+  isolamento "um multiroom nunca interfere no outro" — por isso o switch vem
+  desativado e o serviço é explícito.
+- O `G_PARTY` só sincroniza o ícone de "festa ativa" entre os apps; o
+  firmware o guarda mas não age sobre ele (manual 1.20.2.1). O comportamento
+  real de festa vem dos comandos de grupo com o grupo `0`.
+
+Exemplo — volume 20 em todos os aparelhos em modo festa:
+
+```yaml
+service: aat_multiroom.group_command
+data:
+  action: volume
+  group: 0
+  value: 20
+```
 
 ## Instalação
 
@@ -253,12 +325,15 @@ rebaixar/trocar o `pytest`/`pytest-asyncio` global e quebrar a suíte deste
 projeto sem nenhuma mudança de código aqui (foi exatamente o que
 aconteceu durante o desenvolvimento).
 
-143 testes, cobrindo: framing/sequencial/GETALL/mensagens não
+239 testes, cobrindo: framing/sequencial/GETALL/mensagens não
 solicitadas/timeouts/conexão travada do protocolo (`test_api_protocol.py`),
 parsing de estado por zona e todos os handlers de push
 (`test_device_state.py`), os ajustes de áudio — setters pela conexão
 real, conversão dB ↔ valor do aparelho, sliders e a seção recolhível
-(`test_audio_adjust.py`), a tradução dos erros do protocolo em mensagens
+(`test_audio_adjust.py`), os comandos do aparelho inteiro, limite de volume
+e diagnóstico (`test_unit_wide.py`), grupos/broadcast UDP (`test_group.py`),
+as entidades e o serviço correspondentes (`test_unit_wide_entities.py`), a
+tradução dos erros do protocolo em mensagens
 amigáveis (`test_device_errors.py`), sinal por zona vs. geral / loops de
 fundo resilientes a erro / resync concorrente / `async_close` limpo
 (`test_device_reliability.py`), as entidades `media_player`, `switch` e
@@ -278,10 +353,10 @@ precisa ser confirmado contra um aparelho real.
 
 ## Limitações conhecidas / próximos passos possíveis
 
-- Não implementa modo festa/agrupamento de zonas nem o streamer embutido
-  dos modelos PMR-9 a PMR-13 — pode ser adicionado depois como entidades
-  adicionais, sem precisar redesenhar o que já existe. Controle de médios
-  não existe na API da AAT (só graves e agudos).
+- Não integra o streamer embutido dos modelos PMR-9 a PMR-13: ele usa uma
+  API HTTP separada (`httpapi.asp`, família LinkPlay). Controle de médios
+  não existe na API da AAT (só graves e agudos). O menu de instalação do
+  aparelho (protegido por senha) não é acessível por automação.
 - A contagem de entradas por modelo (usada só para sugerir quantos
   switches criar no primeiro setup) vem de uma tabela estática baseada na
   capa do manual; se o seu modelo específico tiver menos entradas ligadas

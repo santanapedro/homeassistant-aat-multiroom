@@ -5,25 +5,85 @@ whatever dashboard card the user happens to have."""
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 from homeassistant.components.sensor import SensorEntity
 from homeassistant.config_entries import ConfigEntry
+from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .const import CONF_INPUT_NAMES, CONF_ZONE_NAMES, DOMAIN
 from .device import AatMultiroomDevice
-from .entity import zone_device_info
+from .entity import hub_device_info, zone_device_info
+
+
+@dataclass(frozen=True)
+class DiagnosticField:
+    key: str
+    name: str
+    icon: str
+    attr: str  # AatMultiroomDevice attribute holding the value
+    unit: str | None = None
+
+
+# All three come from the GETALL answer (manual 1.13.1), so they're free.
+DIAGNOSTIC_FIELDS: tuple[DiagnosticField, ...] = (
+    DiagnosticField("firmware", "Firmware", "mdi:chip", "firmware"),
+    DiagnosticField("tcp_port2", "Porta TCP secundária", "mdi:ethernet", "tcp_port2"),
+    DiagnosticField("tcp_timeout", "Timeout de conexão", "mdi:timer-outline", "tcp_timeout", "s"),
+)
 
 
 async def async_setup_entry(
     hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddEntitiesCallback
 ) -> None:
     device: AatMultiroomDevice = hass.data[DOMAIN][entry.entry_id]
-    entities = [
+    entities: list[SensorEntity] = [
         AatZoneInputSensor(device, entry, zone_num) for zone_num in sorted(device.zones)
     ]
+    entities.extend(AatDiagnosticSensor(device, entry, field) for field in DIAGNOSTIC_FIELDS)
     async_add_entities(entities)
+
+
+class AatDiagnosticSensor(SensorEntity):
+    """Read-only facts about the multiroom unit itself (firmware, second
+    TCP port, connection timeout), on the hub device."""
+
+    _attr_has_entity_name = True
+    _attr_should_poll = False
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    def __init__(
+        self, device: AatMultiroomDevice, entry: ConfigEntry, field: DiagnosticField
+    ) -> None:
+        self._device = device
+        self._field = field
+        self._attr_name = field.name
+        self._attr_icon = field.icon
+        self._attr_native_unit_of_measurement = field.unit
+        self._attr_unique_id = f"{entry.entry_id}_{field.key}"
+        self._attr_device_info = hub_device_info(device, entry)
+
+    async def async_added_to_hass(self) -> None:
+        # These only change on a full resync, which fires the device-wide
+        # signal along with every zone's.
+        self.async_on_remove(
+            async_dispatcher_connect(self.hass, self._device.signal, self._handle_update)
+        )
+
+    @callback
+    def _handle_update(self) -> None:
+        self.async_write_ha_state()
+
+    @property
+    def available(self) -> bool:
+        return self._device.connected
+
+    @property
+    def native_value(self) -> str | int | None:
+        return getattr(self._device, self._field.attr)
 
 
 class AatZoneInputSensor(SensorEntity):

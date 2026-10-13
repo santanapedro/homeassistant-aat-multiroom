@@ -1,5 +1,5 @@
-"""Small shared helper so every zone entity builds its DeviceInfo the
-same way, instead of repeating this in media_player.py/switch.py/sensor.py."""
+"""Small shared helpers so every entity builds its DeviceInfo the same way,
+instead of repeating this in each platform module."""
 
 from __future__ import annotations
 
@@ -8,6 +8,18 @@ from homeassistant.helpers.device_registry import DeviceInfo
 
 from .const import DOMAIN
 from .device import AatMultiroomDevice
+
+
+def hub_device_info(device: AatMultiroomDevice, entry: ConfigEntry) -> DeviceInfo:
+    """DeviceInfo of the multiroom unit itself (the "hub" every zone device
+    hangs off) - for the entities that belong to the whole amplifier rather
+    than to one zone."""
+    return DeviceInfo(
+        identifiers={(DOMAIN, entry.entry_id)},
+        name=entry.title,
+        manufacturer="AAT - Advanced Audio Technologies",
+        model=device.model,
+    )
 
 
 def zone_device_info(

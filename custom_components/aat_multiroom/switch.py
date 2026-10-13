@@ -1,6 +1,6 @@
 """Switch entities for AAT Multiroom.
 
-Four kinds:
+Five kinds (the last two are UI/assumed-state only, never read back):
 
 * AatMasterPowerSwitch - one per multiroom unit, turns the whole amplifier
   on/off (PWRON/PWROFF). Attached to the multiroom "hub" device.
@@ -13,6 +13,8 @@ Four kinds:
   automatically show as off. This replaced the old ButtonEntity-based
   input selector: buttons have no on/off state in Home Assistant, so
   their icon could never be highlighted when selected - switches can.
+* AatPartySwitch - one per unit, the (assumed-state, broadcast, disabled
+  by default) party-mode indicator.
 * AatAudioSectionSwitch - one per zone, purely a piece of UI state: "is
   this zone's audio-adjustments section expanded in the dashboard?". It
   never talks to the amplifier. Home Assistant's core dashboard cards have
@@ -33,7 +35,8 @@ from homeassistant.helpers.restore_state import RestoreEntity
 
 from .const import CONF_INPUT_NAMES, CONF_ZONE_NAMES, DOMAIN
 from .device import AatMultiroomDevice
-from .entity import zone_device_info
+from .entity import hub_device_info, zone_device_info
+from .group import async_send_group_command
 
 
 async def async_setup_entry(
@@ -43,7 +46,10 @@ async def async_setup_entry(
     input_names: dict[str, str] = entry.options.get(CONF_INPUT_NAMES, {})
     input_numbers = sorted(int(key) for key in input_names)
 
-    entities: list[SwitchEntity] = [AatMasterPowerSwitch(device, entry)]
+    entities: list[SwitchEntity] = [
+        AatMasterPowerSwitch(device, entry),
+        AatPartySwitch(device, entry),
+    ]
     for zone_num in sorted(device.zones):
         entities.append(AatZonePowerSwitch(device, entry, zone_num))
         entities.append(AatAudioSectionSwitch(device, entry, zone_num))
@@ -146,6 +152,47 @@ class AatZonePowerSwitch(_AatSwitchBase):
 
     async def async_turn_off(self, **kwargs) -> None:
         await self._device.async_zone_power(self._zone_num, False)
+
+
+class AatPartySwitch(SwitchEntity, RestoreEntity):
+    """Party-mode indicator (G_PARTY), sent as a UDP broadcast.
+
+    Deliberately modest in what it claims. G_PARTY only synchronizes the
+    "party active" icon between AAT apps - the firmware stores it but does
+    not act on it (manual 1.20.2.1); the actual party behavior comes from
+    the group-0 commands (see the `aat_multiroom.group_command` service).
+    It is also unanswered and reaches every multiroom on the network, so
+    its state is assumed, and the entity is disabled by default to keep
+    the "each multiroom is independent" guarantee unless asked otherwise."""
+
+    _attr_has_entity_name = True
+    _attr_should_poll = False
+    _attr_assumed_state = True
+    _attr_name = "Modo festa"
+    _attr_icon = "mdi:party-popper"
+    _attr_entity_registry_enabled_default = False
+
+    def __init__(self, device: AatMultiroomDevice, entry: ConfigEntry) -> None:
+        self._device = device
+        self._attr_is_on = False
+        self._attr_unique_id = f"{entry.entry_id}_party"
+        self._attr_device_info = hub_device_info(device, entry)
+
+    async def async_added_to_hass(self) -> None:
+        await super().async_added_to_hass()
+        last_state = await self.async_get_last_state()
+        if last_state is not None:
+            self._attr_is_on = last_state.state == STATE_ON
+
+    async def async_turn_on(self, **kwargs) -> None:
+        await async_send_group_command(self.hass, self._device.host, "party_on")
+        self._attr_is_on = True
+        self.async_write_ha_state()
+
+    async def async_turn_off(self, **kwargs) -> None:
+        await async_send_group_command(self.hass, self._device.host, "party_off")
+        self._attr_is_on = False
+        self.async_write_ha_state()
 
 
 class AatAudioSectionSwitch(SwitchEntity, RestoreEntity):
