@@ -42,6 +42,12 @@ def test_zone_state_defaults() -> None:
     assert zone.volume == 0
     assert zone.mute is False
     assert zone.standby is True
+    # Audio adjustments default to "flat/centered" until the device says
+    # otherwise: bass/treble 7 (0 dB), balance 10 (center), pre-amp 0.
+    assert zone.bass == 7
+    assert zone.treble == 7
+    assert zone.balance == 10
+    assert zone.preamp == 0
 
 
 # ---------------------------------------------------------------------
@@ -90,6 +96,34 @@ def test_parse_getall_pmr6_four_zones_power_on() -> None:
     assert set(device.zones) == {1, 2, 3, 4}
 
 
+def test_parse_getall_reads_audio_adjustments_per_zone() -> None:
+    """Chunk order per zone (manual 1.13.1): input, volume, mute, bass,
+    treble, balance, pre-amp - deliberately different values per zone so a
+    wrong offset would show up."""
+    device = make_device()
+    args = ("PMR4 V1.13 ON 12345 60 6 30 OFF 14 13 20 7 5 31 ON 0 1 2 3").split()
+
+    device._parse_getall(args)
+
+    zone1, zone2 = device.zones[1], device.zones[2]
+    assert (zone1.bass, zone1.treble, zone1.balance, zone1.preamp) == (14, 13, 20, 7)
+    assert (zone2.bass, zone2.treble, zone2.balance, zone2.preamp) == (0, 1, 2, 3)
+    # ...without disturbing what was already parsed from the same chunk.
+    assert (zone2.input, zone2.volume, zone2.mute) == (5, 31, True)
+
+
+def test_parse_getall_keeps_other_fields_when_one_audio_value_is_garbled() -> None:
+    device = make_device()
+    args = "PMR4 V1.13 ON 12345 60 6 30 OFF 14 xx 20 7".split()
+
+    device._parse_getall(args)
+
+    zone = device.zones[1]
+    assert (zone.bass, zone.balance, zone.preamp) == (14, 20, 7)
+    assert zone.treble == 7  # untouched default, not a crash
+    assert zone.volume == 30
+
+
 def test_parse_getall_ignores_short_response() -> None:
     device = make_device()
     device._parse_getall(["only", "four", "tokens"])
@@ -120,6 +154,22 @@ def test_parse_getall_ignores_short_response() -> None:
         ("VOLSET", ["1", "15"], lambda d: d.zones[1].volume == 15),
         ("INPSET", ["1", "4"], lambda d: d.zones[1].input == 4),
         ("INPGET", ["1", "2"], lambda d: d.zones[1].input == 2),
+        ("BASS+", ["1", "8"], lambda d: d.zones[1].bass == 8),
+        ("BASS-", ["1", "12"], lambda d: d.zones[1].bass == 12),
+        ("BASSGET", ["1", "0"], lambda d: d.zones[1].bass == 0),
+        ("BASSSET", ["1", "14"], lambda d: d.zones[1].bass == 14),
+        ("TREBLE+", ["1", "1"], lambda d: d.zones[1].treble == 1),
+        ("TREBLE-", ["1", "12"], lambda d: d.zones[1].treble == 12),
+        ("TREBLEGET", ["1", "0"], lambda d: d.zones[1].treble == 0),
+        ("TREBLESET", ["1", "14"], lambda d: d.zones[1].treble == 14),
+        ("LEFT+", ["1", "9"], lambda d: d.zones[1].balance == 9),
+        ("RIGHT+", ["1", "15"], lambda d: d.zones[1].balance == 15),
+        ("BALGET", ["1", "10"], lambda d: d.zones[1].balance == 10),
+        ("BALSET", ["1", "20"], lambda d: d.zones[1].balance == 20),
+        ("PREAMP+", ["1", "1"], lambda d: d.zones[1].preamp == 1),
+        ("PREAMP-", ["1", "6"], lambda d: d.zones[1].preamp == 6),
+        ("PREAMPGET", ["1", "0"], lambda d: d.zones[1].preamp == 0),
+        ("PREAMPSET", ["1", "7"], lambda d: d.zones[1].preamp == 7),
         ("PWRON", [], lambda d: d.power is True),
         ("PWROFF", [], lambda d: d.power is False),
         ("PWRTOG", ["ON"], lambda d: d.power is True),

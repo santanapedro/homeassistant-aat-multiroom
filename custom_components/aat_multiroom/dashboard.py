@@ -71,6 +71,17 @@ DASHBOARD_URL_PATH = "aat-multiroom"
 DASHBOARD_TITLE = "AAT Multiroom"
 DASHBOARD_ICON = "mdi:speaker-multiple"
 
+# (unique_id suffix, label) of the zone sliders shown in the collapsible
+# audio-adjustments section - same suffixes as number.AUDIO_CONTROLS keys.
+# Duplicated here (instead of imported) so this best-effort module doesn't
+# depend on the number platform module importing cleanly.
+AUDIO_SLIDER_NAMES: tuple[tuple[str, str], ...] = (
+    ("bass", "Graves"),
+    ("treble", "Agudos"),
+    ("balance", "Balanço"),
+    ("preamp", "Ganho pré-amp"),
+)
+
 
 async def async_ensure_dashboard(
     hass: HomeAssistant, entry: ConfigEntry, device: AatMultiroomDevice
@@ -220,6 +231,38 @@ def _build_view(
         if row:
             zone_cards.append(
                 {"type": "grid", "columns": min(len(row), 4), "square": False, "cards": row}
+            )
+
+        # Collapsible "Ajustes de áudio" section. Core dashboard cards have
+        # no collapsible container, so: a tile that toggles a plain on/off
+        # switch (see AatAudioSectionSwitch) plus a `conditional` card that
+        # only shows the sliders while that switch is on.
+        section_switch = entity_id("switch", f"{entry.entry_id}_zone_{zone_num}_audio_section")
+        sliders = [
+            {"entity": slider_id, "name": name}
+            for suffix, name in AUDIO_SLIDER_NAMES
+            if (slider_id := entity_id("number", f"{entry.entry_id}_zone_{zone_num}_{suffix}"))
+        ]
+        if section_switch and sliders:
+            zone_cards.append(
+                {
+                    "type": "tile",
+                    "entity": section_switch,
+                    "name": "Ajustes de áudio",
+                    "icon": "mdi:tune-vertical",
+                }
+            )
+            zone_cards.append(
+                {
+                    "type": "conditional",
+                    # `condition` for current frontends; entity/state on the
+                    # condition itself is the older spelling - both are
+                    # accepted, so this works across versions.
+                    "conditions": [
+                        {"condition": "state", "entity": section_switch, "state": "on"}
+                    ],
+                    "card": {"type": "entities", "entities": sliders},
+                }
             )
 
         if zone_cards:

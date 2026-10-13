@@ -1,6 +1,6 @@
 """Switch entities for AAT Multiroom.
 
-Three kinds:
+Four kinds:
 
 * AatMasterPowerSwitch - one per multiroom unit, turns the whole amplifier
   on/off (PWRON/PWROFF). Attached to the multiroom "hub" device.
@@ -13,16 +13,23 @@ Three kinds:
   automatically show as off. This replaced the old ButtonEntity-based
   input selector: buttons have no on/off state in Home Assistant, so
   their icon could never be highlighted when selected - switches can.
+* AatAudioSectionSwitch - one per zone, purely a piece of UI state: "is
+  this zone's audio-adjustments section expanded in the dashboard?". It
+  never talks to the amplifier. Home Assistant's core dashboard cards have
+  no collapsible container, so the automatic dashboard pairs this switch
+  with a `conditional` card to get one using nothing but core cards.
 """
 
 from __future__ import annotations
 
 from homeassistant.components.switch import SwitchEntity
 from homeassistant.config_entries import ConfigEntry
+from homeassistant.const import STATE_ON, EntityCategory
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers.restore_state import RestoreEntity
 
 from .const import CONF_INPUT_NAMES, CONF_ZONE_NAMES, DOMAIN
 from .device import AatMultiroomDevice
@@ -39,6 +46,7 @@ async def async_setup_entry(
     entities: list[SwitchEntity] = [AatMasterPowerSwitch(device, entry)]
     for zone_num in sorted(device.zones):
         entities.append(AatZonePowerSwitch(device, entry, zone_num))
+        entities.append(AatAudioSectionSwitch(device, entry, zone_num))
         entities.extend(
             AatInputSwitch(device, entry, zone_num, input_num) for input_num in input_numbers
         )
@@ -138,6 +146,43 @@ class AatZonePowerSwitch(_AatSwitchBase):
 
     async def async_turn_off(self, **kwargs) -> None:
         await self._device.async_zone_power(self._zone_num, False)
+
+
+class AatAudioSectionSwitch(SwitchEntity, RestoreEntity):
+    """Expanded/collapsed state of a zone's "Ajustes de áudio" dashboard
+    section. Local UI state only: nothing is sent to the amplifier, so it
+    stays available even while the device is unreachable, and its last
+    value survives restarts.
+
+    Note the state is shared by everyone viewing the dashboard (it lives
+    in Home Assistant, not in the browser) - expanding it on one screen
+    expands it everywhere."""
+
+    _attr_has_entity_name = True
+    _attr_should_poll = False
+    _attr_name = "Ajustes de áudio"
+    _attr_icon = "mdi:tune-vertical"
+    _attr_entity_category = EntityCategory.CONFIG
+
+    def __init__(self, device: AatMultiroomDevice, entry: ConfigEntry, zone_num: int) -> None:
+        self._attr_is_on = False
+        zone_name = entry.options.get(CONF_ZONE_NAMES, {}).get(str(zone_num), f"Zona {zone_num}")
+        self._attr_unique_id = f"{entry.entry_id}_zone_{zone_num}_audio_section"
+        self._attr_device_info = zone_device_info(device, entry, zone_num, zone_name)
+
+    async def async_added_to_hass(self) -> None:
+        await super().async_added_to_hass()
+        last_state = await self.async_get_last_state()
+        if last_state is not None:
+            self._attr_is_on = last_state.state == STATE_ON
+
+    async def async_turn_on(self, **kwargs) -> None:
+        self._attr_is_on = True
+        self.async_write_ha_state()
+
+    async def async_turn_off(self, **kwargs) -> None:
+        self._attr_is_on = False
+        self.async_write_ha_state()
 
 
 class AatInputSwitch(_AatSwitchBase):

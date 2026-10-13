@@ -1,7 +1,8 @@
 """High level state holder for one AAT multiroom amplifier.
 
 Wraps AatMultiroomClient with:
-  * a cache of per-zone state (input/volume/mute/standby)
+  * a cache of per-zone state (input/volume/mute/standby, plus the
+    bass/treble/balance/pre-amp adjustments)
   * optimistic local updates so the UI reacts instantly to a tap, before the
     device even answers
   * a dispatcher signal per zone (plus one device-wide signal for the master
@@ -30,13 +31,18 @@ from homeassistant.helpers.dispatcher import async_dispatcher_send
 
 from .api import AatCommandError, AatConnectionError, AatMultiroomClient
 from .const import (
+    BALANCE_CENTER,
+    BALANCE_MAX,
     CONF_MODEL,
     DEFAULT_ERROR_TRANSLATION_KEY,
     DEFAULT_PORT,
     DOMAIN,
     ERROR_CODE_TRANSLATION_KEYS,
     MAX_VOLUME,
+    PREAMP_MAX,
     REFRESH_INTERVAL,
+    TONE_FLAT,
+    TONE_MAX,
 )
 from homeassistant.const import CONF_HOST, CONF_PORT
 
@@ -48,12 +54,32 @@ _RECONNECT_MAX_DELAY = 60
 
 @dataclass
 class ZoneState:
-    """Cached state of a single zone."""
+    """Cached state of a single zone.
+
+    `bass`/`treble`/`balance`/`preamp` hold the device's own raw values
+    (see the ranges in const.py) - converting to dB is the entities' job."""
 
     input: int = 1
     volume: int = 0
     mute: bool = False
     standby: bool = True
+    bass: int = TONE_FLAT
+    treble: int = TONE_FLAT
+    balance: int = BALANCE_CENTER
+    preamp: int = 0
+
+
+def _adjust_handler(attr: str) -> Callable[["AatMultiroomDevice", list[str]], int]:
+    """Handler for any reply/push of the form `<CMD> <zone> <value>` that
+    just stores `value` on one ZoneState attribute - shared by every
+    bass/treble/balance/preamp command (+, -, GET, SET all answer alike)."""
+
+    def handler(self: "AatMultiroomDevice", args: list[str]) -> int:
+        zone = int(args[0])
+        setattr(self._get_zone(zone), attr, int(args[1]))
+        return zone
+
+    return handler
 
 
 class AatMultiroomDevice:
@@ -254,6 +280,14 @@ class AatMultiroomDevice:
                 zone.mute = chunk[2].upper() == "ON"
             except (ValueError, IndexError):
                 continue
+            # Chunk order per the manual: input, volume, mute, bass, treble,
+            # balance, preamp. Parsed one by one so a single odd value
+            # can't throw away the others.
+            for index, attr in ((3, "bass"), (4, "treble"), (5, "balance"), (6, "preamp")):
+                try:
+                    setattr(zone, attr, int(chunk[index]))
+                except (ValueError, IndexError):
+                    continue
         self.zone_count = zone_count
 
     # ------------------------------------------------------------------
@@ -328,6 +362,11 @@ class AatMultiroomDevice:
         self._get_zone(zone).input = int(args[1])
         return zone
 
+    _h_bass = _adjust_handler("bass")
+    _h_treble = _adjust_handler("treble")
+    _h_balance = _adjust_handler("balance")
+    _h_preamp = _adjust_handler("preamp")
+
     def _h_pwron(self, args: list[str]) -> None:
         self.power = True
         return None
@@ -359,6 +398,22 @@ class AatMultiroomDevice:
         "VOLSET": _h_volchange,
         "INPSET": _h_inpchange,
         "INPGET": _h_inpchange,
+        "BASS+": _h_bass,
+        "BASS-": _h_bass,
+        "BASSGET": _h_bass,
+        "BASSSET": _h_bass,
+        "TREBLE+": _h_treble,
+        "TREBLE-": _h_treble,
+        "TREBLEGET": _h_treble,
+        "TREBLESET": _h_treble,
+        "LEFT+": _h_balance,
+        "RIGHT+": _h_balance,
+        "BALGET": _h_balance,
+        "BALSET": _h_balance,
+        "PREAMP+": _h_preamp,
+        "PREAMP-": _h_preamp,
+        "PREAMPGET": _h_preamp,
+        "PREAMPSET": _h_preamp,
         "PWRON": _h_pwron,
         "PWROFF": _h_pwroff,
         "PWRTOG": _h_pwrtog,
@@ -441,6 +496,28 @@ class AatMultiroomDevice:
             self._get_zone(zone).input = input_num
 
         await self._run_command(_apply, "INPSET", zone, input_num, zone=zone)
+
+    async def _async_set_adjust(
+        self, zone: int, attr: str, command: str, value: int, maximum: int
+    ) -> None:
+        value = max(0, min(maximum, int(value)))
+
+        def _apply() -> None:
+            setattr(self._get_zone(zone), attr, value)
+
+        await self._run_command(_apply, command, zone, value, zone=zone)
+
+    async def async_set_bass(self, zone: int, value: int) -> None:
+        await self._async_set_adjust(zone, "bass", "BASSSET", value, TONE_MAX)
+
+    async def async_set_treble(self, zone: int, value: int) -> None:
+        await self._async_set_adjust(zone, "treble", "TREBLESET", value, TONE_MAX)
+
+    async def async_set_balance(self, zone: int, value: int) -> None:
+        await self._async_set_adjust(zone, "balance", "BALSET", value, BALANCE_MAX)
+
+    async def async_set_preamp(self, zone: int, value: int) -> None:
+        await self._async_set_adjust(zone, "preamp", "PREAMPSET", value, PREAMP_MAX)
 
     async def async_master_power(self, on: bool) -> None:
         def _apply() -> None:

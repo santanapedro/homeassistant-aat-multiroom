@@ -8,6 +8,18 @@ DEFAULT_INPUT_COUNT = 8
 
 MAX_VOLUME = 87
 
+# Raw device ranges for the per-zone audio adjustments (manual sections 1.8,
+# 1.9 and 1.11). The entities translate these to dB for display; the device
+# itself only ever sees the raw values below.
+#   BASSSET/TREBLESET: 0..14 - 0 = -14 dB, 7 = flat, 14 = +14 dB (2 dB steps)
+#   BALSET:            0..20 - 0 = full left, 10 = centered, 20 = full right
+#   PREAMPSET:         0..7  - 0 = 0 dB, 7 = +14 dB (2 dB steps)
+TONE_MAX = 14
+TONE_FLAT = 7
+BALANCE_MAX = 20
+BALANCE_CENTER = 10
+PREAMP_MAX = 7
+
 # How often we re-sync the full state as a safety net, on top of the
 # push-based updates that arrive as soon as anything changes.
 REFRESH_INTERVAL = 30

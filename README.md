@@ -17,8 +17,9 @@ branco e recorta/redimensiona conforme as especificações de imagem do HA.
 ## Escopo desta versão
 
 Só controle das **zonas do amplificador** — sem streamer embutido (PMR-9 a
-PMR-13), sem tons (grave/agudo), sem balanço, sem ganho de pré-amp, sem
-modo festa/grupos.
+PMR-13) e sem modo festa/grupos. Inclui os ajustes de áudio por zona
+(graves, agudos, balanço e ganho de pré-amp); a API da AAT não tem
+controle de médios.
 
 Por multiroom (dispositivo "hub"):
 
@@ -51,6 +52,28 @@ Por zona (cada zona é um dispositivo próprio dentro do multiroom):
 - **Sensor "Entrada atual"** — mostra em texto simples o nome da entrada
   selecionada naquela zona, sempre visível em qualquer dashboard sem
   precisar configurar nada.
+- **Ajustes de áudio** — quatro sliders (`number`) por zona, mostrados em
+  dB em vez dos valores crus do aparelho:
+
+  | Controle | Faixa | Passo | Comandos |
+  |---|---|---|---|
+  | Graves | −14 a +14 dB | 2 dB | `BASSSET` / `BASSGET` |
+  | Agudos | −14 a +14 dB | 2 dB | `TREBLESET` / `TREBLEGET` |
+  | Balanço | −10 (esquerda) a +10 (direita) dB | 1 dB | `BALSET` / `BALGET` |
+  | Ganho pré-amp | 0 a +14 dB | 2 dB | `PREAMPSET` / `PREAMPGET` |
+
+  São entidades de configuração (não poluem as listas padrão) e ficam no
+  dashboard automático dentro de uma seção recolhível "Ajustes de áudio"
+  por zona. O Home Assistant não tem um card recolhível nativo, então a
+  seção é feita com um switch simples "Ajustes de áudio" (só estado de
+  interface, nada é enviado ao amplificador) mais um card `conditional` —
+  só cards nativos, sem depender de nada instalado via HACS. Esse estado
+  fica no Home Assistant, então é compartilhado por quem estiver olhando o
+  dashboard: expandir numa tela expande em todas.
+
+  Os modelos PMRH 2/4/6 não têm ajuste de balanço (manual, seção 1.8.1.1):
+  o aparelho aceita o comando mas não faz nada e sempre responde "centro",
+  então nesses modelos o slider de balanço não tem efeito.
 
 ## Instalação
 
@@ -97,7 +120,8 @@ entradas e o histórico das entidades são mantidos.
 Assim que o multiroom conecta, a integração cria (ou atualiza) sozinha um
 dashboard chamado **"AAT Multiroom"** no menu lateral, com uma aba por
 multiroom cadastrado e, dentro dela, um card por zona (media_player +
-switch de power + switches de entrada). Zero passo manual — nem você nem
+switch de power + switches de entrada + seção recolhível "Ajustes de
+áudio" com graves, agudos, balanço e ganho). Zero passo manual — nem você nem
 o cliente precisam montar nada na mão pra ter um dashboard funcional
 assim que a integração é configurada. Renomear zonas/entradas ou
 reconfigurar o IP atualiza esse dashboard automaticamente também.
@@ -229,10 +253,12 @@ rebaixar/trocar o `pytest`/`pytest-asyncio` global e quebrar a suíte deste
 projeto sem nenhuma mudança de código aqui (foi exatamente o que
 aconteceu durante o desenvolvimento).
 
-89 testes, cobrindo: framing/sequencial/GETALL/mensagens não
+143 testes, cobrindo: framing/sequencial/GETALL/mensagens não
 solicitadas/timeouts/conexão travada do protocolo (`test_api_protocol.py`),
 parsing de estado por zona e todos os handlers de push
-(`test_device_state.py`), a tradução dos erros do protocolo em mensagens
+(`test_device_state.py`), os ajustes de áudio — setters pela conexão
+real, conversão dB ↔ valor do aparelho, sliders e a seção recolhível
+(`test_audio_adjust.py`), a tradução dos erros do protocolo em mensagens
 amigáveis (`test_device_errors.py`), sinal por zona vs. geral / loops de
 fundo resilientes a erro / resync concorrente / `async_close` limpo
 (`test_device_reliability.py`), as entidades `media_player`, `switch` e
@@ -252,10 +278,10 @@ precisa ser confirmado contra um aparelho real.
 
 ## Limitações conhecidas / próximos passos possíveis
 
-- Não implementa tons (bass/treble), balanço, ganho de pré-amp, modo
-  festa/agrupamento de zonas nem o streamer embutido dos modelos PMR-9 a
-  PMR-13 — pode ser adicionado depois como entidades `number`/`switch`
-  adicionais, sem precisar redesenhar o que já existe.
+- Não implementa modo festa/agrupamento de zonas nem o streamer embutido
+  dos modelos PMR-9 a PMR-13 — pode ser adicionado depois como entidades
+  adicionais, sem precisar redesenhar o que já existe. Controle de médios
+  não existe na API da AAT (só graves e agudos).
 - A contagem de entradas por modelo (usada só para sugerir quantos
   switches criar no primeiro setup) vem de uma tabela estática baseada na
   capa do manual; se o seu modelo específico tiver menos entradas ligadas

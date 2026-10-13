@@ -86,6 +86,65 @@ def test_build_view_includes_master_power_and_zone_cards() -> None:
     assert grid_entities == ["switch.sala_power", "switch.sala_tv", "switch.sala_spotify"]
 
 
+def _audio_registry() -> dict[tuple[str, str, str], str]:
+    return {
+        ("media_player", "aat_multiroom", "entry1_zone_1_media_player"): "media_player.sala",
+        ("switch", "aat_multiroom", "entry1_zone_1_audio_section"): "switch.sala_ajustes",
+        ("number", "aat_multiroom", "entry1_zone_1_bass"): "number.sala_graves",
+        ("number", "aat_multiroom", "entry1_zone_1_treble"): "number.sala_agudos",
+        ("number", "aat_multiroom", "entry1_zone_1_balance"): "number.sala_balanco",
+        ("number", "aat_multiroom", "entry1_zone_1_preamp"): "number.sala_preamp",
+    }
+
+
+def test_build_view_adds_a_collapsible_audio_section_per_zone() -> None:
+    registered = _audio_registry()
+    view = _build_view(
+        lambda d, p, u: registered.get((d, p, u)), make_entry(), FakeDevice({1: ZoneState()})
+    )
+
+    assert view is not None
+    zone_cards = view["cards"][0]["cards"]
+    toggle = next(c for c in zone_cards if c.get("entity") == "switch.sala_ajustes")
+    assert toggle["type"] == "tile"
+    assert toggle["name"] == "Ajustes de áudio"
+
+    conditional = next(c for c in zone_cards if c["type"] == "conditional")
+    # Only shown while the section switch is on...
+    assert conditional["conditions"] == [
+        {"condition": "state", "entity": "switch.sala_ajustes", "state": "on"}
+    ]
+    # ...and holds the four sliders, in a stable, readable order.
+    rows = conditional["card"]["entities"]
+    assert [r["entity"] for r in rows] == [
+        "number.sala_graves",
+        "number.sala_agudos",
+        "number.sala_balanco",
+        "number.sala_preamp",
+    ]
+    assert [r["name"] for r in rows] == ["Graves", "Agudos", "Balanço", "Ganho pré-amp"]
+
+
+def test_build_view_has_no_audio_section_without_its_switch_or_sliders() -> None:
+    registered = _audio_registry()
+
+    # Sliders exist but the expand switch doesn't -> nothing to collapse with.
+    without_switch = {k: v for k, v in registered.items() if k[0] != "switch"}
+    view = _build_view(
+        lambda d, p, u: without_switch.get((d, p, u)), make_entry(), FakeDevice({1: ZoneState()})
+    )
+    assert view is not None
+    assert all(c["type"] != "conditional" for c in view["cards"][0]["cards"])
+
+    # Switch exists but no sliders were created -> an empty section is noise.
+    without_sliders = {k: v for k, v in registered.items() if k[0] != "number"}
+    view = _build_view(
+        lambda d, p, u: without_sliders.get((d, p, u)), make_entry(), FakeDevice({1: ZoneState()})
+    )
+    assert view is not None
+    assert all(c["type"] != "conditional" for c in view["cards"][0]["cards"])
+
+
 def test_build_view_skips_entities_that_were_never_created() -> None:
     """Only the master power switch exists (e.g. a zone's own entities
     haven't finished registering yet) - the view should still degrade
