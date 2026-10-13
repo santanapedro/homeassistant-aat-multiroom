@@ -61,9 +61,15 @@
     "connection_error": {
       "message": "Communication with the Multiroom failed while running \"{command}\": {error}"
     },
-    "no_multiroom_loaded": "No AAT Multiroom is loaded to send the group command through.",
-    "unknown_config_entry": "The given Multiroom is not loaded.",
-    "invalid_group_command": "Invalid group command: {error}"
+    "no_multiroom_loaded": {
+      "message": "No AAT Multiroom is loaded to send the group command through."
+    },
+    "unknown_config_entry": {
+      "message": "The given Multiroom is not loaded."
+    },
+    "invalid_group_command": {
+      "message": "Invalid group command: {error}"
+    }
   },
   "services": {
     "group_command": {

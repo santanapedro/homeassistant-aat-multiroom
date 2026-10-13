@@ -5,9 +5,10 @@
   "codeowners": [],
   "config_flow": true,
   "dependencies": ["network"],
-  "documentation": "https://www.aataudio.com.br",
+  "documentation": "https://github.com/santanapedro/homeassistant-aat-multiroom",
   "integration_type": "hub",
   "iot_class": "local_push",
+  "issue_tracker": "https://github.com/santanapedro/homeassistant-aat-multiroom/issues",
   "requirements": [],
-  "version": "0.12.0"
+  "version": "0.12.1"
 }
